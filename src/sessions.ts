@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import readline from "node:readline";
+import type BetterSqlite3 from "better-sqlite3";
 import {
   finiteNumberValue,
   isRecord,
@@ -23,7 +24,8 @@ import {
 } from "./utils.js";
 
 type JsonPredicate = (obj: JsonRecord) => boolean;
-type DatabaseSyncCtor = typeof import("node:sqlite").DatabaseSync;
+type BetterSqliteCtor = typeof BetterSqlite3;
+type StateDatabase = ReturnType<BetterSqliteCtor>;
 
 interface StateDbRow {
   id: string;
@@ -42,8 +44,8 @@ interface StateDbRow {
   updated_at_ms: number | null;
 }
 
+let StateDatabaseCtor: BetterSqliteCtor | null | undefined;
 const require = createRequire(import.meta.url);
-let DatabaseSync: DatabaseSyncCtor | null | undefined;
 
 export function discoverSessionFiles(codexDirOrDirs: string | string[]): SessionInfo[] {
   const codexDirs = Array.isArray(codexDirOrDirs) ? codexDirOrDirs : [codexDirOrDirs];
@@ -334,23 +336,42 @@ function readLegacyThreadNames(codexDir: string, ids: Set<string>): Map<string, 
   return names;
 }
 
-function loadDatabaseSync(): DatabaseSyncCtor | null {
-  if (DatabaseSync !== undefined) return DatabaseSync;
+function loadStateDatabaseCtor(): BetterSqliteCtor | null {
+  if (StateDatabaseCtor !== undefined) return StateDatabaseCtor;
 
   try {
-    const sqliteModule: unknown = require("node:sqlite");
-    if (!isRecord(sqliteModule) || typeof sqliteModule.DatabaseSync !== "function") {
-      DatabaseSync = null;
-      return DatabaseSync;
-    }
-
-    // Node 的 experimental sqlite 类型只能从运行时模块上取得；这里已经用 typeof 缩小到构造函数。
-    DatabaseSync = sqliteModule.DatabaseSync as DatabaseSyncCtor;
+    StateDatabaseCtor = betterSqliteCtorFromModule(require("better-sqlite3"));
   } catch {
-    DatabaseSync = null;
+    StateDatabaseCtor = null;
   }
 
-  return DatabaseSync;
+  return StateDatabaseCtor;
+}
+
+/**
+ * 解析 better-sqlite3 的 CommonJS/native 模块加载结果。
+ *
+ * 这里故意不使用顶层 import：如果 native binding 在目标机器上加载失败，
+ * 外层 try/catch 仍能捕获错误，随后会回退到 JSONL 扫描路径，而不是让 CLI
+ * 在模块初始化阶段直接退出。
+ *
+ * 这个函数本身就是模块边界 guard。`typeof` 检查只能证明加载结果是函数；
+ * TypeScript 无法仅凭运行时函数形态推导出 better-sqlite3 的完整构造签名。
+ * 因此函数内的 `as` 被限制在这个边界函数里，用来把已通过 guard 的运行时值接回
+ * `BetterSqliteCtor` 类型。
+ */
+function betterSqliteCtorFromModule(value: unknown): BetterSqliteCtor | null {
+  if (typeof value === "function") {
+    return value as BetterSqliteCtor;
+  }
+
+  if (!isRecord(value)) return null;
+
+  const defaultExport = value.default;
+  if (typeof defaultExport !== "function") return null;
+
+  // 兼容被转成 default export 的加载形态。
+  return defaultExport as BetterSqliteCtor;
 }
 
 function findStateDbPath(codexDir: string): string | null {
@@ -379,12 +400,12 @@ function readStateDbRows(codexDir: string): StateDbRow[] {
   const dbPath = findStateDbPath(codexDir);
   if (!dbPath) return [];
 
-  const Db = loadDatabaseSync();
+  const Db = loadStateDatabaseCtor();
   if (!Db) return [];
 
-  let db: InstanceType<DatabaseSyncCtor> | undefined;
+  let db: StateDatabase | undefined;
   try {
-    db = new Db(dbPath, { readOnly: true });
+    db = new Db(dbPath, { readonly: true, fileMustExist: true });
     const rows = db
       .prepare(
         `

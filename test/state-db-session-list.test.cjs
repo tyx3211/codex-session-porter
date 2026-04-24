@@ -81,8 +81,8 @@ function createStateDb(codexDir, rows) {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
   const script = `
-    const { DatabaseSync } = require("node:sqlite");
-    const db = new DatabaseSync(process.argv[1]);
+    const Database = require("better-sqlite3");
+    const db = new Database(process.argv[1]);
     const rows = JSON.parse(process.argv[2]);
     db.exec(${JSON.stringify(createSql)});
     const insert = db.prepare(${JSON.stringify(insertSql)});
@@ -110,7 +110,6 @@ function createStateDb(codexDir, rows) {
   `;
 
   execFileSync(process.execPath, [
-    "--disable-warning=ExperimentalWarning",
     "-e",
     script,
     dbPath,
