@@ -207,6 +207,180 @@ function fileChangeDiff(filePath, change) {
   return JSON.stringify(record, null, 2);
 }
 
+function parseDurationSeconds(secondsText) {
+  const seconds = Number(secondsText);
+  if (!Number.isFinite(seconds) || seconds < 0) return null;
+
+  const secs = Math.trunc(seconds);
+  const nanos = Math.round((seconds - secs) * 1000000000);
+  return { secs, nanos };
+}
+
+function inferLegacyCommandCwd(command) {
+  const match = /^\s*cd\s+(?:"([^"]+)"|'([^']+)'|(.+?))\s*&&/u.exec(command);
+  if (!match) return "";
+  return (match[1] || match[2] || match[3] || "").trim();
+}
+
+function parseLegacyExecCommandEnvelope(outputText) {
+  const exitCodeMatch = /(?:^|\n)Process exited with code (\d+)\s*(?:\n|$)/u.exec(outputText);
+  const wallTimeMatch = /(?:^|\n)Wall time: ([0-9.]+) seconds\s*(?:\n|$)/u.exec(outputText);
+  const outputMatch = /(?:^|\n)Output:\n([\s\S]*)$/u.exec(outputText);
+
+  return {
+    duration: wallTimeMatch?.[1] ? parseDurationSeconds(wallTimeMatch[1]) : null,
+    exitCode: exitCodeMatch?.[1] || "",
+    output: outputMatch?.[1] || "",
+  };
+}
+
+function parseLegacyApplyPatchChanges(input) {
+  const changes = {};
+  const lines = input.split("\n");
+
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index] || "";
+
+    if (line.startsWith("*** Add File: ")) {
+      const filePath = line.slice("*** Add File: ".length).trim();
+      index += 1;
+
+      const contentLines = [];
+      while (index < lines.length) {
+        const nextLine = lines[index] || "";
+        if (nextLine.startsWith("*** ")) break;
+
+        if (nextLine.startsWith("+")) contentLines.push(nextLine.slice(1));
+        index += 1;
+      }
+
+      changes[filePath] = {
+        type: "add",
+        content: contentLines.length > 0 ? `${contentLines.join("\n")}\n` : "",
+      };
+      continue;
+    }
+
+    if (line.startsWith("*** Delete File: ")) {
+      const filePath = line.slice("*** Delete File: ".length).trim();
+      changes[filePath] = { type: "delete", content: "" };
+      index += 1;
+      continue;
+    }
+
+    if (line.startsWith("*** Update File: ")) {
+      const originalPath = line.slice("*** Update File: ".length).trim();
+      let targetPath = originalPath;
+      index += 1;
+
+      const diffLines = [];
+      while (index < lines.length) {
+        const nextLine = lines[index] || "";
+        if (
+          nextLine.startsWith("*** Update File: ") ||
+          nextLine.startsWith("*** Add File: ") ||
+          nextLine.startsWith("*** Delete File: ") ||
+          nextLine === "*** End Patch"
+        ) {
+          break;
+        }
+
+        if (nextLine.startsWith("*** Move to: ")) {
+          targetPath = nextLine.slice("*** Move to: ".length).trim();
+          index += 1;
+          continue;
+        }
+
+        if (nextLine !== "*** End of File") diffLines.push(nextLine);
+        index += 1;
+      }
+
+      changes[targetPath] = {
+        type: "update",
+        unified_diff: diffLines.join("\n"),
+      };
+      continue;
+    }
+
+    index += 1;
+  }
+
+  return changes;
+}
+
+function resolveLegacyWorkflowRecord(lines, lineNumber, record) {
+  const payload = isRecord(record.payload) ? record.payload : null;
+  if (!payload) return record;
+
+  if (payload.type === "function_call_output" && typeof payload.call_id === "string") {
+    for (let index = lineNumber - 2; index >= 0; index -= 1) {
+      const candidate = parseJsonRecord((lines[index] || "").trim());
+      if (!candidate || candidate.type !== "response_item" || !isRecord(candidate.payload)) continue;
+
+      const previousPayload = candidate.payload;
+      if (
+        previousPayload.type === "function_call" &&
+        previousPayload.name === "exec_command" &&
+        previousPayload.call_id === payload.call_id
+      ) {
+        const argumentsRecord = parseJsonRecord(stringFromUnknown(previousPayload.arguments));
+        const command = argumentsRecord && typeof argumentsRecord.cmd === "string" ? argumentsRecord.cmd : "";
+        const envelope = parseLegacyExecCommandEnvelope(stringFromUnknown(payload.output));
+
+        return {
+          ...record,
+          payload: {
+            type: "exec_command_end",
+            call_id: payload.call_id,
+            parsed_cmd: [{ type: "unknown", cmd: command || payload.call_id }],
+            command: command ? [command] : undefined,
+            cwd: command ? inferLegacyCommandCwd(command) : "",
+            aggregated_output: envelope.output,
+            exit_code: envelope.exitCode,
+            duration: envelope.duration,
+            status: envelope.exitCode === "" || envelope.exitCode === "0" ? "completed" : "failed",
+          },
+        };
+      }
+    }
+  }
+
+  if (payload.type === "custom_tool_call_output" && typeof payload.call_id === "string") {
+    for (let index = lineNumber - 2; index >= 0; index -= 1) {
+      const candidate = parseJsonRecord((lines[index] || "").trim());
+      if (!candidate || candidate.type !== "response_item" || !isRecord(candidate.payload)) continue;
+
+      const previousPayload = candidate.payload;
+      if (
+        previousPayload.type === "custom_tool_call" &&
+        previousPayload.name === "apply_patch" &&
+        previousPayload.call_id === payload.call_id
+      ) {
+        const parsedOutput = parseJsonRecord(stringFromUnknown(payload.output));
+        const metadata = parsedOutput && isRecord(parsedOutput.metadata) ? parsedOutput.metadata : {};
+        const exitCode = stringFromUnknown(metadata.exit_code);
+
+        return {
+          ...record,
+          payload: {
+            type: "patch_apply_end",
+            call_id: payload.call_id,
+            success: exitCode === "" || exitCode === "0",
+            stdout:
+              parsedOutput && typeof parsedOutput.output === "string"
+                ? parsedOutput.output
+                : stringFromUnknown(payload.output),
+            changes: parseLegacyApplyPatchChanges(stringFromUnknown(previousPayload.input)),
+          },
+        };
+      }
+    }
+  }
+
+  return record;
+}
+
 /**
  * 这个脚本只负责“回查被 timeline 折叠掉的完整正文”，因此 Markdown 输出也只需要
  * 精确复现命令事件与补丁事件的完整版本。其他事件统一退回原始 JSON，可避免脚本和主
@@ -303,7 +477,8 @@ function main() {
     return;
   }
 
-  process.stdout.write(renderEventMarkdown(record, options.eventRef));
+  const resolvedRecord = resolveLegacyWorkflowRecord(lines, lineNumber, record);
+  process.stdout.write(renderEventMarkdown(resolvedRecord, options.eventRef));
 }
 
 try {

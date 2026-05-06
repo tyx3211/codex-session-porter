@@ -22,8 +22,8 @@ function contextSourceRows(): readonly unknown[] {
       type: "response_item",
       payload: {
         type: "message",
-        role: "user",
-        content: [{ type: "input_text", text: "被压缩掉的最早问题" }],
+        role: "developer",
+        content: [{ type: "input_text", text: "开发者规则：保持中文输出" }],
       },
     },
     {
@@ -31,8 +31,8 @@ function contextSourceRows(): readonly unknown[] {
       type: "response_item",
       payload: {
         type: "message",
-        role: "assistant",
-        content: [{ type: "output_text", text: "被压缩掉的最早回答" }],
+        role: "user",
+        content: [{ type: "input_text", text: "<environment_context>\n  <cwd>/tmp/context-project</cwd>\n</environment_context>" }],
       },
     },
     {
@@ -41,7 +41,7 @@ function contextSourceRows(): readonly unknown[] {
       payload: {
         type: "message",
         role: "user",
-        content: [{ type: "input_text", text: "压缩后仍应保留的问题" }],
+        content: [{ type: "input_text", text: "最早问题" }],
       },
     },
     {
@@ -50,11 +50,30 @@ function contextSourceRows(): readonly unknown[] {
       payload: {
         type: "message",
         role: "assistant",
-        content: [{ type: "output_text", text: "压缩后仍应保留的回答" }],
+        content: [{ type: "output_text", text: "最早回答" }],
       },
     },
     {
       timestamp: "2026-05-06T00:00:05.000Z",
+      type: "response_item",
+      payload: {
+        type: "function_call",
+        name: "exec_command",
+        arguments: "{\"cmd\":\"printf hidden\"}",
+        call_id: "call_hidden_exec",
+      },
+    },
+    {
+      timestamp: "2026-05-06T00:00:05.500Z",
+      type: "response_item",
+      payload: {
+        type: "function_call_output",
+        call_id: "call_hidden_exec",
+        output: "hidden\n",
+      },
+    },
+    {
+      timestamp: "2026-05-06T00:00:06.000Z",
       type: "compacted",
       payload: {
         message: "压缩摘要",
@@ -62,59 +81,36 @@ function contextSourceRows(): readonly unknown[] {
           {
             type: "message",
             role: "user",
-            content: [{ type: "input_text", text: "压缩摘要" }],
+            content: [{ type: "input_text", text: "压缩后问题" }],
           },
           {
-            type: "message",
-            role: "user",
-            content: [{ type: "input_text", text: "压缩后仍应保留的问题" }],
+            type: "compaction",
+            encrypted_content: "opaque-compaction-payload",
           },
           {
             type: "message",
             role: "assistant",
-            content: [{ type: "output_text", text: "压缩后仍应保留的回答" }],
+            content: [{ type: "output_text", text: "压缩后回答" }],
           },
         ],
-      },
-    },
-    {
-      timestamp: "2026-05-06T00:00:06.000Z",
-      type: "response_item",
-      payload: {
-        type: "message",
-        role: "user",
-        content: [{ type: "input_text", text: "这轮会被回滚的用户消息" }],
-      },
-    },
-    {
-      timestamp: "2026-05-06T00:00:07.000Z",
-      type: "response_item",
-      payload: {
-        type: "message",
-        role: "assistant",
-        content: [{ type: "output_text", text: "这轮会被回滚的助手消息" }],
       },
     },
     {
       timestamp: "2026-05-06T00:00:08.000Z",
       type: "event_msg",
       payload: {
-        type: "thread_rolled_back",
-        num_turns: 1,
+        type: "context_compacted",
       },
     },
   ];
 }
 
-test("--source context exports only the latest effective context after compaction and rollback", async () => {
+test("--source context exports prompt-candidate markdown history for newer rollout rows", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-chat-cli-context-"));
   const inputPath = path.join(tmpDir, "rollout-context.jsonl");
-  const historyPath = path.join(tmpDir, "history.md");
   const contextPath = path.join(tmpDir, "context.md");
 
   writeJsonl(inputPath, contextSourceRows());
-
-  await execFileAsync(process.execPath, [cliPath, "--input", inputPath, "--output", historyPath]);
 
   await execFileAsync(process.execPath, [
     cliPath,
@@ -122,21 +118,21 @@ test("--source context exports only the latest effective context after compactio
     inputPath,
     "--source",
     "context",
+    "--mode",
+    "timeline",
     "--output",
     contextPath,
   ]);
 
-  const historyMarkdown = fs.readFileSync(historyPath, "utf8");
   const contextMarkdown = fs.readFileSync(contextPath, "utf8");
-
-  assert.match(historyMarkdown, /被压缩掉的最早问题/);
-  assert.match(historyMarkdown, /这轮会被回滚的用户消息/);
-
+  assert.match(contextMarkdown, /开发者规则：保持中文输出/);
+  assert.match(contextMarkdown, /<environment_context>/);
+  assert.match(contextMarkdown, /最早问题/);
+  assert.match(contextMarkdown, /最早回答/);
   assert.match(contextMarkdown, /压缩摘要/);
-  assert.match(contextMarkdown, /压缩后仍应保留的问题/);
-  assert.match(contextMarkdown, /压缩后仍应保留的回答/);
-  assert.doesNotMatch(contextMarkdown, /被压缩掉的最早问题/);
-  assert.doesNotMatch(contextMarkdown, /被压缩掉的最早回答/);
-  assert.doesNotMatch(contextMarkdown, /这轮会被回滚的用户消息/);
-  assert.doesNotMatch(contextMarkdown, /这轮会被回滚的助手消息/);
+  assert.match(contextMarkdown, /压缩后问题/);
+  assert.match(contextMarkdown, /压缩后回答/);
+  assert.match(contextMarkdown, /### 上下文压缩/);
+  assert.doesNotMatch(contextMarkdown, /printf hidden/);
+  assert.doesNotMatch(contextMarkdown, /hidden\n/);
 });

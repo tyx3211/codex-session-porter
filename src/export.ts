@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ExportOptions, SessionInfo, TuiNamingMode } from "./types.js";
-import { parsedRowsToJsonl, readParsedJsonlRows, reconstructLatestContextRows } from "./context-source.js";
+import { parsedRowsToJsonl, readParsedJsonlRows, reconstructContextCandidateRows } from "./context-source.js";
 import { readJsonlForSync, renderMarkdownFromJsonl, renderMarkdownFromRows } from "./render.js";
 import { expandHomeDir, safeStat, sanitizeFileNameSegment, truncateUtf8Bytes } from "./utils.js";
 
@@ -41,7 +41,7 @@ export async function exportOneSession(sessionInfo: SessionInfo, outPath: string
   if (opts.format === "jsonl") {
     const jsonlText =
       opts.source === "context"
-        ? parsedRowsToJsonl(reconstructLatestContextRows(await readParsedJsonlRows(sessionInfo.filePath)))
+        ? parsedRowsToJsonl(reconstructContextCandidateRows(await readParsedJsonlRows(sessionInfo.filePath)))
         : await readJsonlForSync(sessionInfo.filePath, {
             includeToolOutputs: opts.includeToolOutputs,
             includeEnvironmentContext: opts.includeEnvironmentContext,
@@ -53,6 +53,7 @@ export async function exportOneSession(sessionInfo: SessionInfo, outPath: string
   }
 
   const renderOptions = {
+    source: opts.source,
     includeAgentReasoning: opts.includeAgentReasoning,
     includeToolCalls: opts.includeToolCalls,
     includeToolOutputs: opts.includeToolOutputs,
@@ -63,7 +64,7 @@ export async function exportOneSession(sessionInfo: SessionInfo, outPath: string
   const markdownText =
     opts.source === "context"
       ? renderMarkdownFromRows(
-          reconstructLatestContextRows(await readParsedJsonlRows(sessionInfo.filePath)),
+          reconstructContextCandidateRows(await readParsedJsonlRows(sessionInfo.filePath)),
           `${sessionInfo.filePath}#context`,
           sessionInfo.meta,
           renderOptions,

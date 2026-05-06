@@ -26,7 +26,7 @@ Codex Chat Export CLI
 
 导出配置：
   --format <markdown|jsonl>   导出格式，默认 markdown
-  --source <history|context>  导出来源；context 表示当前最新有效上下文，而非完整下一轮 API 请求
+  --source <history|context>  导出来源；context 表示新版 rollout 的模型可见历史候选视图，而非完整下一轮 API 请求
   --mode <default|timeline|events>
                               Markdown 渲染模式；timeline 为中等详细时间线，events 为完整事件展开
   --display <thread|file>     会话列表显示模式，默认 thread
@@ -55,7 +55,7 @@ Codex Chat Export CLI
   # 3) 导出最新会话，使用中等详细时间线模式
   cce --latest --mode timeline --output ./latest-timeline.md
 
-  # 4) 导出最新会话的当前最新有效上下文
+  # 4) 导出最新会话的模型可见历史候选视图
   cce --latest --source context --output ./latest-context.md
 
   # 5) 导出最新会话，并展开 Codex VS Code 的命令执行 / patch 新事件

@@ -2,7 +2,6 @@ import fs from "node:fs";
 import readline from "node:readline";
 import { once } from "node:events";
 import {
-  finiteNumberValue,
   isRecord,
   parseJsonRecord,
   stringValue,
@@ -13,8 +12,6 @@ export interface JsonlRow {
   lineNumber: number;
   obj: JsonRecord;
 }
-
-const LEGACY_COMPACTION_USER_MESSAGE_MAX_TOKENS = 20_000;
 
 /**
  * 统一把 JSONL 读取成已解析对象行，便于上层按 history / context 两种来源复用。
@@ -51,44 +48,46 @@ export async function readParsedJsonlRows(filePath: string): Promise<JsonlRow[]>
 }
 
 /**
- * `context` 模式只需要“当前最新有效历史”。
+ * `context` 模式导出的是“模型可见历史候选视图”：
+ * 1. 仍按 JSONL 顺序回放，保留流式历史感；
+ * 2. 只保留可能进入后续 history.for_prompt() 的条目；
+ * 3. 不再只取最后一次 compaction 之后的最终态；
+ * 4. 也不去拼完整 Prompt 外壳。
  *
- * 这里复刻的是 Codex rollout reconstruction 的最终态主语义：
- * 1. 普通 `response_item` 继续顺序追加；
- * 2. `compacted.replacement_history` 会整段替换当前历史；
- * 3. `thread_rolled_back` 会删除最近若干个用户 turn；
- * 4. 对 legacy compaction（没有 replacement_history）做轻量兼容。
- *
- * 这一步还不追求“任意 event_ref 时点快照”，也不重建下一轮完整 prompt。
+ * 当前先对新版 rollout 做高保真支持：
+ * - 保留 developer / user / assistant 三类 message；
+ * - 展开 compacted.replacement_history 里的 message / compaction；
+ * - 保留 context_compacted / thread_rolled_back 这类关键上下文转折事件；
+ * - 排除 reasoning、命令输出、工具输出、search output 等不属于此视图的条目。
  */
-export function reconstructLatestContextRows(rows: readonly JsonlRow[]): JsonlRow[] {
-  let history: JsonlRow[] = [];
+export function reconstructContextCandidateRows(rows: readonly JsonlRow[]): JsonlRow[] {
+  const selected: JsonlRow[] = [];
 
   for (const row of rows) {
     const type = stringValue(row.obj.type);
 
     if (type === "response_item" && hasPayloadRecord(row.obj)) {
-      history.push(row);
+      if (isPromptCandidateResponsePayload(row.obj.payload)) {
+        selected.push(row);
+      }
+
       continue;
     }
 
     if (type === "compacted" && hasPayloadRecord(row.obj)) {
-      history = replacementHistoryRowsFromCompactedRow(row, history);
+      selected.push(...promptCandidateRowsFromCompactedRow(row));
       continue;
     }
 
     if (type === "event_msg" && hasPayloadRecord(row.obj)) {
-      const payload = row.obj.payload;
-      if (payload.type === "thread_rolled_back") {
-        const numTurns = normalizedRollbackTurnCount(payload.num_turns);
-        if (numTurns > 0) {
-          history = dropLastUserTurns(history, numTurns);
-        }
+      const eventType = stringValue(row.obj.payload.type);
+      if (eventType === "context_compacted" || eventType === "thread_rolled_back") {
+        selected.push(row);
       }
     }
   }
 
-  return history;
+  return selected;
 }
 
 export function parsedRowsToJsonl(rows: readonly JsonlRow[]): string {
@@ -97,172 +96,63 @@ export function parsedRowsToJsonl(rows: readonly JsonlRow[]): string {
   return rows.map((row) => JSON.stringify(row.obj)).join("\n") + "\n";
 }
 
-function replacementHistoryRowsFromCompactedRow(
-  row: JsonlRow,
-  currentHistory: readonly JsonlRow[],
-): JsonlRow[] {
-  if (!hasPayloadRecord(row.obj)) return [...currentHistory];
+function promptCandidateRowsFromCompactedRow(row: JsonlRow): JsonlRow[] {
+  if (!hasPayloadRecord(row.obj)) return [];
 
-  const replacementHistory = replacementHistoryItemsFromPayload(row.obj.payload);
-  if (replacementHistory !== null) {
-    return replacementHistory.map((item, index) => ({
-      lineNumber: row.lineNumber * 1000 + index + 1,
+  const rows: JsonlRow[] = [];
+  const summary = stringValue(row.obj.payload.message).trim();
+
+  if (summary) {
+    rows.push({
+      lineNumber: row.lineNumber * 1000 + 1,
       obj: {
         timestamp: stringValue(row.obj.timestamp),
         type: "response_item",
-        payload: item,
+        payload: {
+          type: "compaction",
+          message: summary,
+        },
       },
-    }));
+    });
   }
 
-  return buildLegacyCompactedRows(row, currentHistory);
+  const replacementHistory = promptCandidateReplacementHistoryItems(row.obj.payload);
+  for (let index = 0; index < replacementHistory.length; index += 1) {
+    rows.push({
+      lineNumber: row.lineNumber * 1000 + rows.length + 1,
+      obj: {
+        timestamp: stringValue(row.obj.timestamp),
+        type: "response_item",
+        payload: replacementHistory[index],
+      },
+    });
+  }
+
+  return rows;
 }
 
-function replacementHistoryItemsFromPayload(payload: JsonRecord): JsonRecord[] | null {
-  if (!Array.isArray(payload.replacement_history)) return null;
+function promptCandidateReplacementHistoryItems(payload: JsonRecord): JsonRecord[] {
+  if (!Array.isArray(payload.replacement_history)) return [];
 
   const items: JsonRecord[] = [];
   for (const item of payload.replacement_history) {
     if (!isRecord(item)) continue;
+    if (!isPromptCandidateResponsePayload(item)) continue;
+    if (item.type === "compaction") continue;
+
     items.push(item);
   }
 
   return items;
 }
 
-function buildLegacyCompactedRows(row: JsonlRow, currentHistory: readonly JsonlRow[]): JsonlRow[] {
-  if (!hasPayloadRecord(row.obj)) return [...currentHistory];
+function isPromptCandidateResponsePayload(payload: JsonRecord): boolean {
+  const type = stringValue(payload.type);
+  if (type === "compaction") return true;
+  if (type !== "message") return false;
 
-  const summaryText = stringValue(row.obj.payload.message).trim() || "(no summary available)";
-  const selectedMessages = selectLegacyCompactionUserMessages(currentHistory);
-
-  const rows: JsonlRow[] = selectedMessages.map((message, index) => ({
-    lineNumber: row.lineNumber * 1000 + index + 1,
-    obj: responseMessageRow(row, "user", message),
-  }));
-
-  rows.push({
-    lineNumber: row.lineNumber * 1000 + selectedMessages.length + 1,
-    obj: responseMessageRow(row, "user", summaryText),
-  });
-
-  return rows;
-}
-
-function selectLegacyCompactionUserMessages(history: readonly JsonlRow[]): string[] {
-  const selected: string[] = [];
-  let remaining = LEGACY_COMPACTION_USER_MESSAGE_MAX_TOKENS;
-
-  for (let index = history.length - 1; index >= 0; index -= 1) {
-    const message = userMessageTextFromResponseRow(history[index]);
-    if (!message) continue;
-
-    if (remaining <= 0) break;
-
-    const tokens = approxTokenCount(message);
-    if (tokens <= remaining) {
-      selected.push(message);
-      remaining -= tokens;
-      continue;
-    }
-
-    selected.push(truncateToApproxTokens(message, remaining));
-    break;
-  }
-
-  selected.reverse();
-  return selected;
-}
-
-function dropLastUserTurns(history: readonly JsonlRow[], numTurns: number): JsonlRow[] {
-  if (numTurns <= 0 || history.length === 0) return [...history];
-
-  const kept: JsonlRow[] = [];
-  let pendingTurns = numTurns;
-
-  for (let index = history.length - 1; index >= 0; index -= 1) {
-    const row = history[index];
-
-    if (pendingTurns > 0) {
-      if (isUserTurnBoundary(row)) {
-        pendingTurns -= 1;
-      }
-      continue;
-    }
-
-    kept.push(row);
-  }
-
-  kept.reverse();
-  return kept;
-}
-
-function normalizedRollbackTurnCount(value: unknown): number {
-  const numeric = finiteNumberValue(value);
-  if (numeric === null || numeric <= 0) return 0;
-
-  return Math.trunc(numeric);
-}
-
-function isUserTurnBoundary(row: JsonlRow): boolean {
-  if (stringValue(row.obj.type) !== "response_item" || !hasPayloadRecord(row.obj)) return false;
-
-  const payload = row.obj.payload;
-  return payload.type === "message" && payload.role === "user" && extractTextFromMessageContent(payload.content) !== "";
-}
-
-function userMessageTextFromResponseRow(row: JsonlRow | undefined): string {
-  if (!row) return "";
-  if (stringValue(row.obj.type) !== "response_item" || !hasPayloadRecord(row.obj)) return "";
-
-  const payload = row.obj.payload;
-  if (payload.type !== "message" || payload.role !== "user") return "";
-
-  return extractTextFromMessageContent(payload.content);
-}
-
-function responseMessageRow(row: JsonlRow, role: "user" | "assistant", text: string): JsonRecord {
-  const contentType = role === "assistant" ? "output_text" : "input_text";
-
-  return {
-    timestamp: stringValue(row.obj.timestamp),
-    type: "response_item",
-    payload: {
-      type: "message",
-      role,
-      content: [{ type: contentType, text }],
-    },
-  };
-}
-
-function extractTextFromMessageContent(content: unknown): string {
-  if (!Array.isArray(content)) return "";
-
-  const parts: string[] = [];
-  for (const item of content) {
-    if (!isRecord(item)) continue;
-
-    if (
-      (item.type === "input_text" || item.type === "output_text" || item.type === "text") &&
-      typeof item.text === "string" &&
-      item.text
-    ) {
-      parts.push(item.text);
-    }
-  }
-
-  return parts.join("");
-}
-
-function approxTokenCount(text: string): number {
-  return Math.floor((text.length + 3) / 4);
-}
-
-function truncateToApproxTokens(text: string, maxTokens: number): string {
-  if (maxTokens <= 0) return "";
-
-  const maxChars = Math.max(1, maxTokens * 4);
-  return text.slice(0, maxChars);
+  const role = stringValue(payload.role);
+  return role === "developer" || role === "user" || role === "assistant";
 }
 
 function hasPayloadRecord(obj: JsonRecord): obj is JsonRecord & { payload: JsonRecord } {

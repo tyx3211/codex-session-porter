@@ -11,7 +11,7 @@ Codex Session Porter 是一个面向 OpenAI Codex CLI / Codex VS Code 会话历�
 ### 特性
 
 - 与 `codex resume` 接近的会话发现逻辑：优先读取 Codex `state_*.sqlite`，并使用 `session_index.jsonl` 回退补全线程名。
-- 支持 `history` / `context` 两层来源模式；`context` 会导出当前最新有效的 resume context（恢复上下文），而不是原始全量历史。
+- 支持 `history` / `context` 两层来源模式；`context` 会导出新版 rollout 的“模型可见历史候选视图”，而不是原始全量历史，也不是完整下一轮 API 请求。
 - 支持 `default`、`timeline` 和 `events` 三种 Markdown 模式；`timeline` 会保留完整工作流事件与 `action` 时间线，但折叠“命令执行”事件的正文输出与详细 diff，`events` 会展开完整事件细节。
 - TUI 支持多选会话、按 `Updated` / `Created` 排序、显示 `Created`、`Updated`、`Branch`、`Project`、`Conversation` 列。
 - TUI 导出时可选择按线程名作为文件名前缀，线程名前缀最多保留 50 个 UTF-8 字节。
@@ -63,7 +63,7 @@ cce --list --display file
 # 导出最新会话
 cce --latest --output ./latest.md
 
-# 导出最新会话的当前最新有效 context
+# 导出最新会话的模型可见历史候选视图
 cce --latest --source context --output ./latest-context.md
 
 # 导出指定索引会话
@@ -122,13 +122,15 @@ cce --latest \
 ### 两层模式
 
 - `history`：导出原始 rollout / 历史事件流
-- `context`：导出当前最新有效的 resume context，也就是会话现在如果被 `codex resume` 恢复后，会重建出的有效历史
+- `context`：导出新版 rollout 的模型可见历史候选视图；仍按 JSONL 顺序组织为 Markdown 历史，但会过滤掉明显不会进入后续模型输入链的条目
 
 注意：
 
 - `context` 不是完整下一轮 API 请求
-- `context` 不会伪造运行时重新注入的 developer 指令、skills、plugins 或环境上下文
-- `context` 目前只导出“最终最新有效状态”，不支持按任意 `event_ref` 查看历史时点上下文
+- `context` 不会伪造下一轮 turn 开始时运行时重新注入的 developer 指令、skills、plugins 或其他 Prompt 外壳字段
+- `context` 当前只对较新的 rollout 结构做高保真支持；更早版本不保证能完整复原
+- `context` 默认会保留已实际落盘的 developer / environment-like 注入消息、用户消息、助手消息，以及 compaction / context_compacted 这类上下文转折节点
+- `context` 默认不会保留 reasoning、命令输出、工具输出、search output 这类不属于“模型可见历史候选”的条目
 
 ### Markdown 模式
 
@@ -180,7 +182,7 @@ The goal is not to reproduce the full rich UI from Codex. Instead, it turns usef
 ### Features
 
 - Session discovery close to `codex resume`: reads Codex `state_*.sqlite` first and falls back to `session_index.jsonl` for thread names.
-- Two source layers: `history` and `context`. `context` exports the latest effective resume context instead of the raw full history.
+- Two source layers: `history` and `context`. `context` exports a prompt-candidate, model-visible history view for newer rollout formats instead of the raw full history.
 - Three Markdown modes: `default`, `timeline`, and `events`. `timeline` keeps the workflow event stream and `action` timeline, but hides command-execution body output and detailed diffs, while `events` expands the full event details.
 - TUI picker with multi-select, `Updated` / `Created` sorting, and `Created`, `Updated`, `Branch`, `Project`, `Conversation` columns.
 - Optional thread-name file prefix in TUI exports, capped at 50 UTF-8 bytes.
@@ -232,7 +234,7 @@ cce --list --display file
 # Export the latest session
 cce --latest --output ./latest.md
 
-# Export the latest effective context for the latest session
+# Export the latest prompt-candidate context view for the latest session
 cce --latest --source context --output ./latest-context.md
 
 # Export selected sessions by index
@@ -291,13 +293,15 @@ cce --latest \
 ### Source Layers
 
 - `history`: export the raw rollout / history stream
-- `context`: export the latest effective resume context, meaning the history Codex would rebuild if the thread were resumed now
+- `context`: export a model-visible prompt-candidate history view for newer rollouts; it stays ordered like a Markdown conversation history while filtering out rows that clearly do not belong in the later prompt chain
 
 Notes:
 
 - `context` is not the full next API request payload
-- `context` does not fabricate runtime-reinjected developer instructions, skills, plugins, or environment context
-- `context` currently exports only the latest effective state, not arbitrary point-in-time context snapshots
+- `context` does not fabricate the runtime-reinjected developer instructions, skills, plugins, or other prompt-wrapper fields that get attached when a new turn actually starts
+- `context` currently targets newer rollout formats for high-fidelity reconstruction; older formats are not guaranteed
+- `context` keeps already-recorded developer/environment-like injections, user messages, assistant messages, and compaction markers
+- `context` excludes reasoning, command output, tool output, and search output by default because those do not belong to this prompt-candidate history view
 
 ### Markdown Modes
 

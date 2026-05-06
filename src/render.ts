@@ -22,12 +22,23 @@ interface EventRenderContext {
   detail: WorkflowDetailLevel;
 }
 
+interface LegacyPendingResponseItem {
+  context: EventRenderContext;
+  payload: JsonRecord;
+}
+
+interface LegacyWorkflowState {
+  readonly pendingExecCalls: Map<string, LegacyPendingResponseItem>;
+  readonly pendingPatchCalls: Map<string, LegacyPendingResponseItem>;
+}
+
 interface DiffStat {
   added: number;
   removed: number;
 }
 
 export interface RenderOptions {
+  source: CliOptions["source"];
   includeAgentReasoning: boolean;
   includeToolCalls: boolean;
   includeToolOutputs: boolean;
@@ -62,6 +73,18 @@ function writeTurn(writer: Writer, who: string, ts: string | null, message: unkn
   if (Array.isArray(images) && images.length > 0) {
     writer.write(`（包含 ${images.length} 张图片：未导出）\n\n`);
   }
+}
+
+function writeCompactionTurn(writer: Writer, ts: string | null, message: unknown): void {
+  writer.write(`## 上下文压缩摘要${ts ? `（${ts}）` : ""}\n\n`);
+
+  const text = typeof message === "string" ? message.trim() : "";
+  if (text) {
+    writer.write(`${text}\n\n`);
+    return;
+  }
+
+  writer.write("（压缩内容已加密，无法导出正文）\n\n");
 }
 
 function formatDuration(duration: unknown): string {
@@ -239,6 +262,136 @@ function fileChangeDiff(filePath: string, change: unknown): string {
   if (content) return content;
 
   return JSON.stringify(record, null, 2);
+}
+
+function parseDurationSeconds(secondsText: string): JsonRecord | null {
+  const seconds = Number(secondsText);
+  if (!Number.isFinite(seconds) || seconds < 0) return null;
+
+  const secs = Math.trunc(seconds);
+  const nanos = Math.round((seconds - secs) * 1000000000);
+
+  return {
+    secs,
+    nanos,
+  };
+}
+
+function inferLegacyCommandCwd(command: string): string {
+  const match = /^\s*cd\s+(?:"([^"]+)"|'([^']+)'|(.+?))\s*&&/u.exec(command);
+  if (!match) return "";
+
+  return (match[1] || match[2] || match[3] || "").trim();
+}
+
+interface LegacyExecCommandEnvelope {
+  readonly duration: JsonRecord | null;
+  readonly exitCode: string;
+  readonly output: string;
+}
+
+/**
+ * 旧版 exec_command 的输出被包了一层执行器信封：
+ * - 前几行是 Chunk / Wall time / Process exited...
+ * - 真正的 stdout/stderr 在最后的 Output: 段
+ *
+ * 这里把它拆成“元数据 + 正文”，让后续统一复用新版命令事件渲染。
+ */
+function parseLegacyExecCommandEnvelope(outputText: string): LegacyExecCommandEnvelope {
+  const exitCodeMatch = /(?:^|\n)Process exited with code (\d+)\s*(?:\n|$)/u.exec(outputText);
+  const wallTimeMatch = /(?:^|\n)Wall time: ([0-9.]+) seconds\s*(?:\n|$)/u.exec(outputText);
+  const outputMatch = /(?:^|\n)Output:\n([\s\S]*)$/u.exec(outputText);
+
+  return {
+    duration: wallTimeMatch?.[1] ? parseDurationSeconds(wallTimeMatch[1]) : null,
+    exitCode: exitCodeMatch?.[1] || "",
+    output: outputMatch?.[1] || "",
+  };
+}
+
+/**
+ * 旧版 apply_patch 只有原始 patch 文本，没有新版 patch_apply_end 的结构化 changes。
+ * 这里做一层保守解析：
+ * - Add/Delete 还原为 content
+ * - Update 保留 unified diff 主体
+ * - Move 只影响展示路径，不额外伪造复杂语义
+ */
+function parseLegacyApplyPatchChanges(input: string): JsonRecord {
+  const changes: JsonRecord = {};
+  const lines = input.split("\n");
+
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index] || "";
+
+    if (line.startsWith("*** Add File: ")) {
+      const filePath = line.slice("*** Add File: ".length).trim();
+      index += 1;
+
+      const contentLines: string[] = [];
+      while (index < lines.length) {
+        const nextLine = lines[index] || "";
+        if (nextLine.startsWith("*** ")) break;
+
+        if (nextLine.startsWith("+")) contentLines.push(nextLine.slice(1));
+        index += 1;
+      }
+
+      changes[filePath] = {
+        type: "add",
+        content: contentLines.length > 0 ? `${contentLines.join("\n")}\n` : "",
+      };
+      continue;
+    }
+
+    if (line.startsWith("*** Delete File: ")) {
+      const filePath = line.slice("*** Delete File: ".length).trim();
+      changes[filePath] = {
+        type: "delete",
+        content: "",
+      };
+      index += 1;
+      continue;
+    }
+
+    if (line.startsWith("*** Update File: ")) {
+      const originalPath = line.slice("*** Update File: ".length).trim();
+      let targetPath = originalPath;
+      index += 1;
+
+      const diffLines: string[] = [];
+      while (index < lines.length) {
+        const nextLine = lines[index] || "";
+        if (
+          nextLine.startsWith("*** Update File: ") ||
+          nextLine.startsWith("*** Add File: ") ||
+          nextLine.startsWith("*** Delete File: ") ||
+          nextLine === "*** End Patch"
+        ) {
+          break;
+        }
+
+        if (nextLine.startsWith("*** Move to: ")) {
+          targetPath = nextLine.slice("*** Move to: ".length).trim();
+          index += 1;
+          continue;
+        }
+
+        if (nextLine !== "*** End of File") diffLines.push(nextLine);
+        index += 1;
+      }
+
+      changes[targetPath] = {
+        type: "update",
+        unified_diff: diffLines.join("\n"),
+      };
+      continue;
+    }
+
+    index += 1;
+  }
+
+  return changes;
 }
 
 function previewValue(value: unknown, maxLen = 140): string {
@@ -509,6 +662,112 @@ function writeWorkflowEventFromEventMsg(
   }
 }
 
+function legacyExecPayloadFromResponseItems(callPayload: JsonRecord, outputPayload: JsonRecord): JsonRecord | null {
+  const callId = typeof callPayload.call_id === "string" ? callPayload.call_id : "";
+  const outputText = typeof outputPayload.output === "string" ? outputPayload.output : "";
+  if (!callId || !outputText) return null;
+
+  const argumentsText = typeof callPayload.arguments === "string" ? callPayload.arguments : "";
+  const argumentsRecord = parseJsonRecord(argumentsText);
+  const command =
+    argumentsRecord && typeof argumentsRecord.cmd === "string"
+      ? argumentsRecord.cmd
+      : "";
+
+  const envelope = parseLegacyExecCommandEnvelope(outputText);
+  const payload: JsonRecord = {
+    call_id: callId,
+    parsed_cmd: command ? [{ type: "unknown", cmd: command }] : [{ type: "unknown", cmd: callId }],
+    aggregated_output: envelope.output,
+    status: envelope.exitCode === "" || envelope.exitCode === "0" ? "completed" : "failed",
+  };
+
+  if (command) {
+    payload.command = [command];
+    const inferredCwd = inferLegacyCommandCwd(command);
+    if (inferredCwd) payload.cwd = inferredCwd;
+  }
+
+  if (envelope.duration) payload.duration = envelope.duration;
+  if (envelope.exitCode) payload.exit_code = envelope.exitCode;
+
+  return payload;
+}
+
+function legacyPatchPayloadFromResponseItems(callPayload: JsonRecord, outputPayload: JsonRecord): JsonRecord | null {
+  const callId = typeof callPayload.call_id === "string" ? callPayload.call_id : "";
+  const inputText = typeof callPayload.input === "string" ? callPayload.input : "";
+  if (!callId || !inputText) return null;
+
+  const outputText = typeof outputPayload.output === "string" ? outputPayload.output : "";
+  const parsedOutput = parseJsonRecord(outputText);
+  const metadata = parsedOutput && isRecord(parsedOutput.metadata) ? parsedOutput.metadata : {};
+  const exitCode = stringFromUnknown(metadata.exit_code);
+
+  const payload: JsonRecord = {
+    call_id: callId,
+    success: exitCode === "" || exitCode === "0",
+    stdout:
+      parsedOutput && typeof parsedOutput.output === "string"
+        ? parsedOutput.output
+        : outputText,
+    changes: parseLegacyApplyPatchChanges(inputText),
+  };
+
+  return payload;
+}
+
+/**
+ * 旧版 rollout 把命令与补丁记录成 response_item 成对事件：
+ * - exec_command => function_call + function_call_output
+ * - apply_patch => custom_tool_call + custom_tool_call_output
+ *
+ * 新版 timeline/events 已经围绕 end-event 渲染；这里把旧结构先折叠成同一语义，再复用
+ * 现有命令/编辑事件渲染函数，避免旧版历史长期退化成“工具调用噪音”。
+ */
+function writeLegacyWorkflowEventFromResponseItem(
+  writer: Writer,
+  context: EventRenderContext,
+  payload: JsonRecord,
+  state: LegacyWorkflowState,
+): boolean {
+  if (payload.type === "function_call" && payload.name === "exec_command" && typeof payload.call_id === "string") {
+    state.pendingExecCalls.set(payload.call_id, { context, payload });
+    return true;
+  }
+
+  if (payload.type === "function_call_output" && typeof payload.call_id === "string") {
+    const pending = state.pendingExecCalls.get(payload.call_id);
+    if (!pending) return false;
+
+    state.pendingExecCalls.delete(payload.call_id);
+    const legacyPayload = legacyExecPayloadFromResponseItems(pending.payload, payload);
+    if (!legacyPayload) return false;
+
+    writeExecCommandEvent(writer, context, legacyPayload);
+    return true;
+  }
+
+  if (payload.type === "custom_tool_call" && payload.name === "apply_patch" && typeof payload.call_id === "string") {
+    state.pendingPatchCalls.set(payload.call_id, { context, payload });
+    return true;
+  }
+
+  if (payload.type === "custom_tool_call_output" && typeof payload.call_id === "string") {
+    const pending = state.pendingPatchCalls.get(payload.call_id);
+    if (!pending) return false;
+
+    state.pendingPatchCalls.delete(payload.call_id);
+    const legacyPayload = legacyPatchPayloadFromResponseItems(pending.payload, payload);
+    if (!legacyPayload) return false;
+
+    writePatchApplyEvent(writer, context, legacyPayload);
+    return true;
+  }
+
+  return false;
+}
+
 function writeWorkflowEventFromResponseItem(
   writer: Writer,
   context: EventRenderContext,
@@ -613,6 +872,11 @@ export function writeMarkdownFromRows(
   const preferEventUserMessages = messageSources.hasEventUserMessage;
   const preferEventAgentMessages = messageSources.hasEventAgentMessage;
   const workflowDetail = eventDetailLevelForMode(options.mode);
+  const shouldFilterEnvironmentContext = options.source === "history" && !options.includeEnvironmentContext;
+  const legacyWorkflowState: LegacyWorkflowState = {
+    pendingExecCalls: new Map<string, LegacyPendingResponseItem>(),
+    pendingPatchCalls: new Map<string, LegacyPendingResponseItem>(),
+  };
 
   for (const row of rows) {
     const obj = row.obj;
@@ -650,6 +914,10 @@ export function writeMarkdownFromRows(
     if (obj.type === "response_item" && hasPayloadRecord(obj)) {
       const payload = obj.payload;
 
+      if (workflowDetail && writeLegacyWorkflowEventFromResponseItem(writer, eventContext, payload, legacyWorkflowState)) {
+        continue;
+      }
+
       if (workflowDetail && writeWorkflowEventFromResponseItem(writer, eventContext, payload)) {
         continue;
       }
@@ -681,7 +949,7 @@ export function writeMarkdownFromRows(
 
         const text = extractTextFromResponseMessageContent(payload.content);
         if (!text.trim()) continue;
-        if (!options.includeEnvironmentContext && looksLikeEnvironmentContext(text)) continue;
+        if (shouldFilterEnvironmentContext && looksLikeEnvironmentContext(text)) continue;
 
         if (role === "user") {
           writeTurn(writer, "用户", ts, text);
@@ -690,7 +958,18 @@ export function writeMarkdownFromRows(
 
         if (role === "assistant") {
           writeTurn(writer, "Codex", ts, text);
+          continue;
         }
+
+        if (role === "developer" && options.source === "context") {
+          writeTurn(writer, "开发者", ts, text);
+          continue;
+        }
+      }
+
+      if (payload.type === "compaction" && options.source === "context") {
+        writeCompactionTurn(writer, ts, payload.message);
+        continue;
       }
     }
   }

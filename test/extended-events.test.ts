@@ -195,6 +195,84 @@ function extendedEventRows(): readonly unknown[] {
   ];
 }
 
+function legacyWorkflowRows(): readonly unknown[] {
+  return [
+    {
+      timestamp: "2026-02-02T02:19:25.512Z",
+      type: "session_meta",
+      payload: {
+        id: "legacy-workflow",
+        timestamp: "2026-02-02T02:19:25.512Z",
+        cwd: "/home/tyx/hdfs-learning",
+        originator: "codex_vscode",
+        cli_version: "0.92.0",
+      },
+    },
+    {
+      timestamp: "2026-02-02T02:19:25.600Z",
+      type: "response_item",
+      payload: {
+        type: "function_call",
+        name: "exec_command",
+        arguments: JSON.stringify({
+          cmd: "cd /home/tyx/hdfs-learning && nl -ba works/day2/depthv3.capnp | sed -n '1,20p'",
+        }),
+        call_id: "call_legacy_exec",
+      },
+    },
+    {
+      timestamp: "2026-02-02T02:19:25.700Z",
+      type: "response_item",
+      payload: {
+        type: "function_call_output",
+        call_id: "call_legacy_exec",
+        output:
+          "Chunk ID: deadbeef\n" +
+          "Wall time: 0.0512 seconds\n" +
+          "Process exited with code 0\n" +
+          "Output:\n" +
+          "     1\t@0x885069b6aa49fd5c;\n" +
+          "     2\tstruct DepthV3 {\n",
+      },
+    },
+    {
+      timestamp: "2026-02-02T02:41:45.626Z",
+      type: "response_item",
+      payload: {
+        type: "custom_tool_call",
+        status: "completed",
+        call_id: "call_legacy_patch",
+        name: "apply_patch",
+        input:
+          "*** Begin Patch\n" +
+          "*** Update File: works/day2/Cpp/generate_depth.cpp\n" +
+          "@@\n" +
+          " struct LevelSnapshot {\n" +
+          "     double price;\n" +
+          "     int64_t volume;\n" +
+          "+    int64_t order_count;\n" +
+          " }\n" +
+          "*** End Patch",
+      },
+    },
+    {
+      timestamp: "2026-02-02T02:41:51.908Z",
+      type: "response_item",
+      payload: {
+        type: "custom_tool_call_output",
+        call_id: "call_legacy_patch",
+        output: JSON.stringify({
+          output: "Success. Updated the following files:\nM works/day2/Cpp/generate_depth.cpp\n",
+          metadata: {
+            exit_code: 0,
+            duration_seconds: 0,
+          },
+        }),
+      },
+    },
+  ];
+}
+
 function extractEventRef(markdown: string, heading: string): string {
   const escaped = heading.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   const match = markdown.match(new RegExp(`${escaped}[\\s\\S]*?- event_ref：\`(E\\d{6})\``));
@@ -316,6 +394,73 @@ test("--mode timeline keeps workflow events but hides command output and diff bo
   assert.doesNotMatch(markdown, /~~~diff/);
   assert.match(markdown, /### 上下文压缩/);
   assert.match(markdown, /### 协作代理关闭完成/);
+});
+
+test("legacy response_item workflow events are normalized in timeline mode", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-chat-cli-legacy-timeline-"));
+  const inputPath = path.join(tmpDir, "legacy-rollout.jsonl");
+  const outputPath = path.join(tmpDir, "timeline.md");
+
+  writeJsonl(inputPath, legacyWorkflowRows());
+
+  await execFileAsync(process.execPath, [
+    cliPath,
+    "--input",
+    inputPath,
+    "--mode",
+    "timeline",
+    "--output",
+    outputPath,
+  ]);
+
+  const markdown = fs.readFileSync(outputPath, "utf8");
+  assert.match(markdown, /### 命令执行/);
+  const commandSection = extractSection(markdown, "### 命令执行");
+  const execRef = extractEventRef(markdown, "### 命令执行");
+  assert.match(commandSection, /- event_ref：`E\d{6}`/);
+  assert.match(commandSection, /- cwd：`\/home\/tyx\/hdfs-learning`/);
+  assert.match(commandSection, /- exit_code：`0`/);
+  assert.match(commandSection, /- cmd：\n\n~~~text\ncd \/home\/tyx\/hdfs-learning && nl -ba works\/day2\/depthv3\.capnp \| sed -n '1,20p'\n~~~/);
+  assert.doesNotMatch(commandSection, /Chunk ID:/);
+  assert.doesNotMatch(commandSection, /#### output/);
+
+  assert.match(markdown, /### action：`edit_file`/);
+  const editSection = extractSection(markdown, "### action：`edit_file`");
+  const patchRef = extractEventRef(markdown, "### action：`edit_file`");
+  assert.match(editSection, /- success：`true`/);
+  assert.match(editSection, /- call_id：`call_legacy_patch`/);
+  assert.match(editSection, /#### update `works\/day2\/Cpp\/generate_depth\.cpp`/);
+  assert.match(editSection, /- diff_stat：`\+1 \/ -0`/);
+  assert.doesNotMatch(markdown, /### 自定义工具调用：`apply_patch`/);
+  assert.doesNotMatch(markdown, /### 自定义工具输出/);
+
+  const scriptPath = path.join(
+    process.cwd(),
+    "skills",
+    "cce-event-ref-lookup",
+    "scripts",
+    "reveal-event-ref.mjs",
+  );
+
+  const execReveal = await execFileAsync(process.execPath, [
+    scriptPath,
+    "--markdown",
+    outputPath,
+    "--event-ref",
+    execRef,
+  ]);
+  assert.match(execReveal.stdout, /### 命令执行/);
+  assert.match(execReveal.stdout, /struct DepthV3/);
+
+  const patchReveal = await execFileAsync(process.execPath, [
+    scriptPath,
+    "--markdown",
+    outputPath,
+    "--event-ref",
+    patchRef,
+  ]);
+  assert.match(patchReveal.stdout, /### action：`edit_file`/);
+  assert.match(patchReveal.stdout, /\+    int64_t order_count;/);
 });
 
 test("timeline event_ref can be used to recover hidden exec output and diff details", async () => {
