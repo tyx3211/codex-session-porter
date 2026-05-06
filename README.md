@@ -131,6 +131,14 @@ cce --latest \
 
 仓库内置了一个 repo-local skill：`skills/cce-event-ref-lookup`。
 
+如果希望把它安装到用户级 `~/.codex/skills`，可以使用仓库外的 Codex `skill-installer`，从本仓库的 GitHub 地址安装：
+
+```bash
+python ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
+  --repo tyx3211/codex-session-porter \
+  --path skills/cce-event-ref-lookup
+```
+
 当我们查看 `--mode timeline` 导出的 Markdown 时，如果想恢复某个事件被折叠掉的命令输出或完整 diff，可以直接用：
 
 ```bash
@@ -250,20 +258,47 @@ cce --latest \
 - `↑` / `↓`: move cursor
 - `Space`: select or deselect the current session
 - `a`: select all or invert selection
-- `m`: toggle `default` / `events` Markdown mode
+- `m`: toggle `default` / `timeline` / `events` Markdown mode
 - `d`: toggle thread-name / file-name display
 - `s` or `Tab`: toggle `Updated` / `Created` sorting
 - `Enter`: confirm selection
 - `q` or `Esc`: quit
 
-### Markdown Events Mode
+### Markdown Modes
 
-`--mode events` expands Codex VS Code event records into Markdown, including:
+- `default`: exports the main user/assistant conversation, plus any explicitly enabled reasoning or tool-call content
+- `timeline`: exports the workflow event stream, but hides command body output and replaces full diffs with `+/-` line-count summaries
+- `events`: exports the workflow event stream with full command output and complete patch diffs
 
-- command working directory, exit code, duration, and output
-- changed files and diff snippets from patch events
+Both `timeline` and `events` expand Codex / Codex VS Code workflow events into Markdown, including:
 
-Event blocks use `~~~` as Markdown fences, which avoids accidental closing when command output itself contains backtick code fences.
+- command working directory, exit code, duration, and parsed action type
+- changed files, with either diff stats in `timeline` or complete diff bodies in `events`
+- workflow records such as web searches, task start/finish, context compaction, thread rollback, collaboration lifecycle, and MCP tool calls
+
+Each event block carries a stable `event_ref`. Event blocks use `~~~` as Markdown fences, which avoids accidental closing when command output itself contains backtick code fences.
+
+### Timeline Lookup Skill
+
+The repository ships a repo-local skill at `skills/cce-event-ref-lookup`.
+
+If you want it installed into the user-level Codex skill directory (`~/.codex/skills`), you can use Codex's `skill-installer` helper against this GitHub repository:
+
+```bash
+python ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
+  --repo tyx3211/codex-session-porter \
+  --path skills/cce-event-ref-lookup
+```
+
+When reading a `--mode timeline` export, this helper can recover the hidden command output or full patch diff for a specific `event_ref`:
+
+```bash
+node skills/cce-event-ref-lookup/scripts/reveal-event-ref.mjs \
+  --markdown ./latest-timeline.md \
+  --event-ref E000123
+```
+
+The script reads the source JSONL path from the Markdown header, jumps back to the exact JSONL line referenced by `event_ref`, and prints the full event details.
 
 ### Acknowledgements
 
