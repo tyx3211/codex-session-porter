@@ -150,6 +150,12 @@ function writeTextMetadataLine(writer: Writer, label: string, value: string): vo
   writer.write(`- ${label}：${value}\n`);
 }
 
+function writeCodeBlockField(writer: Writer, label: string, lang: string, value: string): void {
+  if (!value) return;
+  writer.write(`- ${label}：\n\n`);
+  writer.write(fencedBlock(lang, value));
+}
+
 function lineCountFromContent(content: string): number {
   const normalized = content.replace(/\n$/u, "");
   if (!normalized) return 0;
@@ -262,12 +268,12 @@ function writeExecCommandEvent(writer: Writer, context: EventRenderContext, payl
   const label = commandLabel(payload);
   const action = normalizedCommandActionKind(payload);
   const isBuiltinAction = isBuiltinCommandAction(action);
-  const title = isBuiltinAction ? `action：\`${action}\`` : `action：\`unknown\` - \`${label}\``;
+  const title = isBuiltinAction ? `action：\`${action}\`` : "命令执行";
   writeEventHeader(writer, title, context);
 
   if (typeof payload.cwd === "string" && payload.cwd) writeCodeMetadataLine(writer, "cwd", payload.cwd);
   if (isBuiltinAction) {
-    writeCodeMetadataLine(writer, "cmd", label);
+    writeCodeBlockField(writer, "cmd", "text", label);
     writer.write("\n");
     return;
   }
@@ -282,6 +288,7 @@ function writeExecCommandEvent(writer: Writer, context: EventRenderContext, payl
 
   const duration = formatDuration(payload.duration);
   if (duration) writeCodeMetadataLine(writer, "duration", duration);
+  writeCodeBlockField(writer, "cmd", "text", label);
   writer.write("\n");
 
   if (context.detail === "summary") return;

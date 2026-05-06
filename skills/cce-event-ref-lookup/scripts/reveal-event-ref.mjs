@@ -123,6 +123,12 @@ function fencedBlock(lang, content) {
   return `${fence}${lang}\n${text}\n${fence}\n\n`;
 }
 
+function blockField(label, lang, content) {
+  const text = stringFromUnknown(content);
+  if (!text) return "";
+  return `- ${label}：\n\n${fencedBlock(lang, text)}`;
+}
+
 function formatDuration(duration) {
   if (!isRecord(duration)) return "";
 
@@ -216,12 +222,12 @@ function renderEventMarkdown(record, eventRef) {
   if (payload.type === "exec_command_end") {
     const label = commandLabel(payload);
     const action = normalizedCommandActionKind(payload);
-    const title = isBuiltinCommandAction(action) ? `action：\`${action}\`` : `action：\`unknown\` - \`${label}\``;
+    const title = isBuiltinCommandAction(action) ? `action：\`${action}\`` : "命令执行";
     let out = `### ${title}${timestamp ? `（${timestamp}）` : ""}\n\n`;
     out += `- event_ref：\`${eventRef}\`\n`;
     if (typeof payload.cwd === "string" && payload.cwd) out += `- cwd：\`${payload.cwd}\`\n`;
     if (isBuiltinCommandAction(action)) {
-      out += `- cmd：\`${label}\`\n\n`;
+      out += blockField("cmd", "text", label);
       return out;
     }
 
@@ -231,6 +237,7 @@ function renderEventMarkdown(record, eventRef) {
     const duration = formatDuration(payload.duration);
     if (duration) out += `- duration：\`${duration}\`\n`;
     out += "\n";
+    out += blockField("cmd", "text", label);
 
     const output =
       typeof payload.aggregated_output === "string" && payload.aggregated_output

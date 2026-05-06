@@ -233,15 +233,15 @@ test("--mode events renders the meaningful workflow events into markdown", async
   assert.match(markdown, /### action：`read`/);
   const readSection = extractSection(markdown, "### action：`read`");
   assert.match(readSection, /- cwd：`\/tmp\/project`/);
-  assert.match(readSection, /- cmd：`printf hi`/);
+  assert.match(readSection, /- cmd：\n\n~~~text\nprintf hi\n~~~/);
   assert.doesNotMatch(readSection, /- exit_code：`0`/);
   assert.match(markdown, /### action：`list_files`/);
   const listSection = extractSection(markdown, "### action：`list_files`");
-  assert.match(listSection, /- cmd：`fd \. src`/);
+  assert.match(listSection, /- cmd：\n\n~~~text\nfd \. src\n~~~/);
   assert.doesNotMatch(listSection, /- duration：`0\.450s`/);
-  assert.match(markdown, /### action：`unknown` - `git status --short`/);
-  const unknownSection = extractSection(markdown, "### action：`unknown` - `git status --short`");
-  assert.doesNotMatch(unknownSection, /- cmd：/);
+  assert.match(markdown, /### 命令执行/);
+  const unknownSection = extractSection(markdown, "### 命令执行");
+  assert.match(unknownSection, /- cmd：\n\n~~~text\ngit status --short\n~~~/);
   assert.match(unknownSection, /- exit_code：`0`/);
   assert.match(unknownSection, /- duration：`0\.005s`/);
   assert.match(markdown, /- event_ref：`E\d{6}`/);
@@ -304,11 +304,12 @@ test("--mode timeline keeps workflow events but hides command output and diff bo
   assert.doesNotMatch(markdown, /#### output/);
   assert.doesNotMatch(markdown, /console\.log\(1\)/);
   const readSection = extractSection(markdown, "### action：`read`");
-  assert.match(readSection, /- cmd：`printf hi`/);
+  assert.match(readSection, /- cmd：\n\n~~~text\nprintf hi\n~~~/);
   assert.doesNotMatch(readSection, /- exit_code：`0`/);
-  assert.match(markdown, /### action：`unknown` - `git status --short`/);
-  const unknownSection = extractSection(markdown, "### action：`unknown` - `git status --short`");
+  assert.match(markdown, /### 命令执行/);
+  const unknownSection = extractSection(markdown, "### 命令执行");
   assert.match(unknownSection, /- exit_code：`0`/);
+  assert.match(unknownSection, /- cmd：\n\n~~~text\ngit status --short\n~~~/);
   assert.doesNotMatch(unknownSection, /#### output/);
   assert.match(markdown, /#### add `\/tmp\/project\/demo\.txt`/);
   assert.match(markdown, /- diff_stat：`\+2 \/ -0`/);
@@ -335,7 +336,7 @@ test("timeline event_ref can be used to recover hidden exec output and diff deta
   ]);
 
   const markdown = fs.readFileSync(timelinePath, "utf8");
-  const execRef = extractEventRef(markdown, "### action：`unknown` - `git status --short`");
+  const execRef = extractEventRef(markdown, "### 命令执行");
   const patchRef = extractEventRef(markdown, "### action：`edit_file`");
 
   const scriptPath = path.join(
@@ -353,7 +354,8 @@ test("timeline event_ref can be used to recover hidden exec output and diff deta
     "--event-ref",
     execRef,
   ]);
-  assert.match(execReveal.stdout, /### action：`unknown` - `git status --short`/);
+  assert.match(execReveal.stdout, /### 命令执行/);
+  assert.match(execReveal.stdout, /- cmd：\n\n~~~text\ngit status --short\n~~~/);
   assert.match(execReveal.stdout, / M src\/render\.ts/);
 
   const patchReveal = await execFileAsync(process.execPath, [

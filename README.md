@@ -12,7 +12,7 @@ Codex Session Porter 是一个面向 OpenAI Codex CLI / Codex VS Code 会话历�
 
 - 与 `codex resume` 接近的会话发现逻辑：优先读取 Codex `state_*.sqlite`，并使用 `session_index.jsonl` 回退补全线程名。
 - 支持 `history` / `context` 两层来源模式；`context` 会导出当前最新有效的 resume context（恢复上下文），而不是原始全量历史。
-- 支持 `default`、`timeline` 和 `events` 三种 Markdown 模式；`timeline` 会保留完整工作流事件与 `action` 时间线，但折叠 `unknown` 动作的命令正文输出与详细 diff，`events` 会展开完整事件细节。
+- 支持 `default`、`timeline` 和 `events` 三种 Markdown 模式；`timeline` 会保留完整工作流事件与 `action` 时间线，但折叠“命令执行”事件的正文输出与详细 diff，`events` 会展开完整事件细节。
 - TUI 支持多选会话、按 `Updated` / `Created` 排序、显示 `Created`、`Updated`、`Branch`、`Project`、`Conversation` 列。
 - TUI 导出时可选择按线程名作为文件名前缀，线程名前缀最多保留 50 个 UTF-8 字节。
 - JSONL 导出支持过滤工具输出和环境上下文。
@@ -133,13 +133,13 @@ cce --latest \
 ### Markdown 模式
 
 - `default`：只导出用户/助手主对话，以及显式要求保留的 reasoning / tool call 内容
-- `timeline`：导出完整工作流事件时间线；普通内置 `action` 只保留 `event_ref / cwd / cmd`，`unknown` 动作会保留执行元数据但折叠正文输出；文件编辑事件改成 `edit_file`，并把每个文件的 diff 改成 `+/-` 行数统计
-- `events`：导出完整工作流事件时间线；普通内置 `action` 只保留精简元数据，`unknown` 动作会展开完整正文输出，`edit_file` 会展开完整 patch diff
+- `timeline`：导出完整工作流事件时间线；普通内置 `action` 只保留 `event_ref / cwd / cmd`，未知工具调用会回退成“命令执行”事件，保留执行元数据但折叠正文输出；文件编辑事件改成 `edit_file`，并把每个文件的 diff 改成 `+/-` 行数统计
+- `events`：导出完整工作流事件时间线；普通内置 `action` 只保留精简元数据，命令执行事件会展开完整正文输出，`edit_file` 会展开完整 patch diff
 
 `timeline` 和 `events` 会把 Codex / Codex VS Code 记录的新事件展开成 Markdown，包括：
 
-- 以 `action` 为主语的文件读取、搜索、列目录、未知工具调用和编辑事件
-- 普通内置 `action` 下的 `cwd / cmd`，以及 `unknown` 动作下的执行元数据与可回查正文
+- 以 `action` 为主语的文件读取、搜索、列目录和编辑事件，以及回退到“命令执行”的未知工具调用
+- 普通内置 `action` 下的 `cwd / cmd`，其中 `cmd` 会单独落在 `~~~` 代码块里；命令执行事件会额外保留执行元数据与可回查正文
 - patch 变更涉及的文件，以及 `timeline` 下的 diff 统计或 `events` 下的完整 diff
 - 网页搜索、任务开始/结束、上下文压缩、线程回滚、协作代理生命周期、MCP 工具调用等工作流事件
 
@@ -165,7 +165,7 @@ node skills/cce-event-ref-lookup/scripts/reveal-event-ref.mjs \
   --event-ref E000123
 ```
 
-脚本会根据 Markdown 头部记录的 `源文件` 路径，精确回到原始 JSONL 的那一行记录，并输出完整事件内容。对 `unknown` 动作会恢复完整输出；对 `edit_file` 事件会恢复完整 diff。
+脚本会根据 Markdown 头部记录的 `源文件` 路径，精确回到原始 JSONL 的那一行记录，并输出完整事件内容。对“命令执行”事件会恢复完整输出；对 `edit_file` 事件会恢复完整 diff。
 
 ### 致谢
 
@@ -181,7 +181,7 @@ The goal is not to reproduce the full rich UI from Codex. Instead, it turns usef
 
 - Session discovery close to `codex resume`: reads Codex `state_*.sqlite` first and falls back to `session_index.jsonl` for thread names.
 - Two source layers: `history` and `context`. `context` exports the latest effective resume context instead of the raw full history.
-- Three Markdown modes: `default`, `timeline`, and `events`. `timeline` keeps the workflow event stream and `action` timeline, but hides `unknown` action body output and detailed diffs, while `events` expands the full event details.
+- Three Markdown modes: `default`, `timeline`, and `events`. `timeline` keeps the workflow event stream and `action` timeline, but hides command-execution body output and detailed diffs, while `events` expands the full event details.
 - TUI picker with multi-select, `Updated` / `Created` sorting, and `Created`, `Updated`, `Branch`, `Project`, `Conversation` columns.
 - Optional thread-name file prefix in TUI exports, capped at 50 UTF-8 bytes.
 - JSONL export with switches for tool outputs and environment context.
@@ -302,13 +302,13 @@ Notes:
 ### Markdown Modes
 
 - `default`: exports the main user/assistant conversation, plus any explicitly enabled reasoning or tool-call content
-- `timeline`: exports the workflow event stream; built-in actions keep only `event_ref / cwd / cmd`, `unknown` actions keep execution metadata but hide body output, and `edit_file` replaces full diffs with `+/-` line-count summaries
-- `events`: exports the workflow event stream; built-in actions stay compact, `unknown` actions expand full output, and `edit_file` expands complete patch diffs
+- `timeline`: exports the workflow event stream; built-in actions keep only `event_ref / cwd / cmd`, unknown tool calls fall back to a command-execution event that keeps execution metadata but hides body output, and `edit_file` replaces full diffs with `+/-` line-count summaries
+- `events`: exports the workflow event stream; built-in actions stay compact, command-execution events expand full output, and `edit_file` expands complete patch diffs
 
 Both `timeline` and `events` expand Codex / Codex VS Code workflow events into Markdown, including:
 
-- action-centric file reads, searches, directory listings, unknown tool calls, and edit events
-- `cwd / cmd` for built-in actions, plus execution metadata and recoverable body output for `unknown` actions
+- action-centric file reads, searches, directory listings, and edit events, plus fallback command-execution events for unknown tool calls
+- `cwd / cmd` for built-in actions, with `cmd` rendered in a dedicated fenced block, plus execution metadata and recoverable body output for command-execution events
 - changed files, with either diff stats in `timeline` or complete diff bodies in `events`
 - workflow records such as web searches, task start/finish, context compaction, thread rollback, collaboration lifecycle, and MCP tool calls
 
