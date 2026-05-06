@@ -7,6 +7,10 @@ import {
   stringValue,
   type JsonRecord,
 } from "./guards.js";
+import {
+  looksLikeAgentsInstructions,
+  looksLikeEnvironmentContext,
+} from "./utils.js";
 
 export interface JsonlRow {
   lineNumber: number;
@@ -49,21 +53,31 @@ export async function readParsedJsonlRows(filePath: string): Promise<JsonlRow[]>
 
 /**
  * `context` 模式导出的是“模型可见历史候选视图”：
- * 1. 仍按 JSONL 顺序回放，保留流式历史感；
- * 2. 只保留可能进入后续 history.for_prompt() 的条目；
- * 3. 不再只取最后一次 compaction 之后的最终态；
+ * 1. 从最后一次带 replacement_history 的 compaction 建立恢复基线；
+ * 2. 再按 JSONL 顺序追加这个基线之后的 response_item；
+ * 3. 只保留可能进入后续 history.for_prompt() 的条目；
  * 4. 也不去拼完整 Prompt 外壳。
  *
  * 当前先对新版 rollout 做高保真支持：
- * - 保留 developer / user / assistant 三类 message；
- * - 展开 compacted.replacement_history 里的 message / compaction；
- * - 保留 context_compacted / thread_rolled_back 这类关键上下文转折事件；
- * - 排除 reasoning、命令输出、工具输出、search output 等不属于此视图的条目。
+ * - 保留 user / assistant 两类会话正文 message；
+ * - 保留函数调用、工具调用、工具输出、reasoning 等会进入 ContextManager 的 API message；
+ * - 展开 compacted.replacement_history 里的 message；
+ * - 保留 compacted.message 作为压缩摘要；
+ * - 排除 developer、AGENTS.md、environment_context 这类框架注入；
+ * - 排除 event_msg 这类 UI/审计事件。
  */
 export function reconstructContextCandidateRows(rows: readonly JsonlRow[]): JsonlRow[] {
-  const selected: JsonlRow[] = [];
+  const compactedIndex = findLastReplacementCompactionIndex(rows);
+  let selected: JsonlRow[] = [];
+  let startIndex = 0;
 
-  for (const row of rows) {
+  if (compactedIndex !== -1) {
+    selected = promptCandidateRowsFromCompactedRow(rows[compactedIndex]);
+    startIndex = compactedIndex + 1;
+  }
+
+  for (let index = startIndex; index < rows.length; index += 1) {
+    const row = rows[index];
     const type = stringValue(row.obj.type);
 
     if (type === "response_item" && hasPayloadRecord(row.obj)) {
@@ -75,15 +89,18 @@ export function reconstructContextCandidateRows(rows: readonly JsonlRow[]): Json
     }
 
     if (type === "compacted" && hasPayloadRecord(row.obj)) {
-      selected.push(...promptCandidateRowsFromCompactedRow(row));
+      const replacementRows = promptCandidateRowsFromCompactedRow(row);
+      if (replacementRows.length > 0) selected = replacementRows;
       continue;
     }
 
     if (type === "event_msg" && hasPayloadRecord(row.obj)) {
       const eventType = stringValue(row.obj.payload.type);
-      if (eventType === "context_compacted" || eventType === "thread_rolled_back") {
-        selected.push(row);
+      if (eventType === "thread_rolled_back") {
+        selected = dropLastUserTurns(selected, numericValue(row.obj.payload.num_turns));
       }
+
+      continue;
     }
   }
 
@@ -131,6 +148,19 @@ function promptCandidateRowsFromCompactedRow(row: JsonlRow): JsonlRow[] {
   return rows;
 }
 
+function findLastReplacementCompactionIndex(rows: readonly JsonlRow[]): number {
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const row = rows[index];
+    if (stringValue(row.obj.type) !== "compacted") continue;
+    if (!hasPayloadRecord(row.obj)) continue;
+    if (!Array.isArray(row.obj.payload.replacement_history)) continue;
+
+    return index;
+  }
+
+  return -1;
+}
+
 function promptCandidateReplacementHistoryItems(payload: JsonRecord): JsonRecord[] {
   if (!Array.isArray(payload.replacement_history)) return [];
 
@@ -149,12 +179,93 @@ function promptCandidateReplacementHistoryItems(payload: JsonRecord): JsonRecord
 function isPromptCandidateResponsePayload(payload: JsonRecord): boolean {
   const type = stringValue(payload.type);
   if (type === "compaction") return true;
-  if (type !== "message") return false;
+  if (type !== "message") return isContextManagerApiMessageType(type);
 
   const role = stringValue(payload.role);
-  return role === "developer" || role === "user" || role === "assistant";
+  if (role === "assistant") return true;
+  if (role !== "user") return false;
+
+  const text = extractPromptCandidateMessageText(payload);
+  if (!text) return false;
+  if (looksLikeAgentsInstructions(text)) return false;
+  if (looksLikeEnvironmentContext(text)) return false;
+
+  return true;
+}
+
+function isContextManagerApiMessageType(type: string): boolean {
+  switch (type) {
+    case "function_call":
+    case "function_call_output":
+    case "tool_search_call":
+    case "tool_search_output":
+    case "custom_tool_call":
+    case "custom_tool_call_output":
+    case "local_shell_call":
+    case "reasoning":
+    case "web_search_call":
+    case "image_generation_call":
+    case "context_compaction":
+      return true;
+    default:
+      return false;
+  }
 }
 
 function hasPayloadRecord(obj: JsonRecord): obj is JsonRecord & { payload: JsonRecord } {
   return isRecord(obj.payload);
+}
+
+function numericValue(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+
+  return Math.floor(parsed);
+}
+
+function dropLastUserTurns(rows: readonly JsonlRow[], numTurns: number): JsonlRow[] {
+  if (numTurns <= 0 || rows.length === 0) return [...rows];
+
+  let remaining = numTurns;
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const row = rows[index];
+    if (!isUserTurnBoundaryRow(row)) continue;
+
+    remaining -= 1;
+    if (remaining === 0) return rows.slice(0, index);
+  }
+
+  return [];
+}
+
+function isUserTurnBoundaryRow(row: JsonlRow): boolean {
+  if (stringValue(row.obj.type) !== "response_item") return false;
+  if (!hasPayloadRecord(row.obj)) return false;
+
+  const payload = row.obj.payload;
+  if (stringValue(payload.type) !== "message") return false;
+  if (stringValue(payload.role) !== "user") return false;
+
+  const text = extractPromptCandidateMessageText(payload);
+  if (!text) return false;
+  if (looksLikeAgentsInstructions(text)) return false;
+  if (looksLikeEnvironmentContext(text)) return false;
+
+  return true;
+}
+
+function extractPromptCandidateMessageText(payload: JsonRecord): string {
+  const content = payload.content;
+  if (!Array.isArray(content)) return "";
+
+  const parts: string[] = [];
+  for (const item of content) {
+    if (!isRecord(item)) continue;
+
+    const text = stringValue(item.text);
+    if (!text) continue;
+    parts.push(text);
+  }
+
+  return parts.join("\n").trim();
 }

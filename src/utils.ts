@@ -106,6 +106,11 @@ export function looksLikeEnvironmentContext(text: unknown): boolean {
   return value.startsWith("<environment_context>");
 }
 
+export function looksLikeAgentsInstructions(text: unknown): boolean {
+  const value = stringFromUnknown(text).trimStart();
+  return value.startsWith("# AGENTS.md instructions for ");
+}
+
 export function extractRequestFromIdeContextBlock(text: string): string {
   const marker = "## My request for Codex:";
   const idx = text.indexOf(marker);

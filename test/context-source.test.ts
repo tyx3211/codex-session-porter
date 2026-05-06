@@ -32,6 +32,15 @@ function contextSourceRows(): readonly unknown[] {
       payload: {
         type: "message",
         role: "user",
+        content: [{ type: "input_text", text: "# AGENTS.md instructions for /tmp/context-project\n- 始终使用中文输出" }],
+      },
+    },
+    {
+      timestamp: "2026-05-06T00:00:02.500Z",
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "user",
         content: [{ type: "input_text", text: "<environment_context>\n  <cwd>/tmp/context-project</cwd>\n</environment_context>" }],
       },
     },
@@ -69,7 +78,7 @@ function contextSourceRows(): readonly unknown[] {
       payload: {
         type: "function_call_output",
         call_id: "call_hidden_exec",
-        output: "hidden\n",
+        output: "COMMAND_OUTPUT_ONLY\n",
       },
     },
     {
@@ -102,6 +111,25 @@ function contextSourceRows(): readonly unknown[] {
         type: "context_compacted",
       },
     },
+    {
+      timestamp: "2026-05-06T00:00:09.000Z",
+      type: "response_item",
+      payload: {
+        type: "function_call",
+        name: "exec_command",
+        arguments: "{\"cmd\":\"printf after_compact\"}",
+        call_id: "call_after_compact_exec",
+      },
+    },
+    {
+      timestamp: "2026-05-06T00:00:09.500Z",
+      type: "response_item",
+      payload: {
+        type: "function_call_output",
+        call_id: "call_after_compact_exec",
+        output: "AFTER_COMPACT_OUTPUT_ONLY\n",
+      },
+    },
   ];
 }
 
@@ -125,14 +153,18 @@ test("--source context exports prompt-candidate markdown history for newer rollo
   ]);
 
   const contextMarkdown = fs.readFileSync(contextPath, "utf8");
-  assert.match(contextMarkdown, /开发者规则：保持中文输出/);
-  assert.match(contextMarkdown, /<environment_context>/);
-  assert.match(contextMarkdown, /最早问题/);
-  assert.match(contextMarkdown, /最早回答/);
+  assert.doesNotMatch(contextMarkdown, /开发者规则：保持中文输出/);
+  assert.doesNotMatch(contextMarkdown, /# AGENTS\.md instructions for/);
+  assert.doesNotMatch(contextMarkdown, /<environment_context>/);
+  assert.doesNotMatch(contextMarkdown, /最早问题/);
+  assert.doesNotMatch(contextMarkdown, /最早回答/);
+  assert.doesNotMatch(contextMarkdown, /printf hidden/);
   assert.match(contextMarkdown, /压缩摘要/);
   assert.match(contextMarkdown, /压缩后问题/);
   assert.match(contextMarkdown, /压缩后回答/);
-  assert.match(contextMarkdown, /### 上下文压缩/);
-  assert.doesNotMatch(contextMarkdown, /printf hidden/);
-  assert.doesNotMatch(contextMarkdown, /hidden\n/);
+  assert.match(contextMarkdown, /### 命令执行/);
+  assert.match(contextMarkdown, /~~~text\nprintf after_compact\n~~~/);
+  assert.doesNotMatch(contextMarkdown, /### 上下文压缩/);
+  assert.doesNotMatch(contextMarkdown, /COMMAND_OUTPUT_ONLY/);
+  assert.doesNotMatch(contextMarkdown, /AFTER_COMPACT_OUTPUT_ONLY/);
 });

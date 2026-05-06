@@ -11,7 +11,7 @@ Codex Session Porter 是一个面向 OpenAI Codex CLI / Codex VS Code 会话历�
 ### 特性
 
 - 与 `codex resume` 接近的会话发现逻辑：优先读取 Codex `state_*.sqlite`，并使用 `session_index.jsonl` 回退补全线程名。
-- 支持 `history` / `context` 两层来源模式；`context` 会导出新版 rollout 的“模型可见历史候选视图”，而不是原始全量历史，也不是完整下一轮 API 请求。
+- 支持 `history` / `context` 两层来源模式；`context` 会导出新版 rollout 的“模型可见历史候选视图”：先从最后一次带 `replacement_history` 的 compaction（上下文压缩）建立基线，再追加其后的消息、工具调用与工具结果，但不带 `AGENTS.md`、developer、`<environment_context>` 这类框架自动注入块；它既不是原始全量历史，也不是完整下一轮 API 请求。
 - 支持 `default`、`timeline` 和 `events` 三种 Markdown 模式；`timeline` 会保留完整工作流事件与 `action` 时间线，但折叠“命令执行”事件的正文输出与详细 diff，`events` 会展开完整事件细节。
 - TUI 支持多选会话、按 `Updated` / `Created` 排序、显示 `Created`、`Updated`、`Branch`、`Project`、`Conversation` 列。
 - TUI 导出时可选择按线程名作为文件名前缀，线程名前缀最多保留 50 个 UTF-8 字节。
@@ -122,15 +122,16 @@ cce --latest \
 ### 两层模式
 
 - `history`：导出原始 rollout / 历史事件流
-- `context`：导出新版 rollout 的模型可见历史候选视图；仍按 JSONL 顺序组织为 Markdown 历史，但会过滤掉明显不会进入后续模型输入链的条目
+- `context`：导出新版 rollout 的模型可见历史候选视图；从最后一次带 `replacement_history` 的 compaction 建立恢复基线，再按 JSONL 顺序追加后续消息、工具调用与工具结果，并过滤掉框架自动注入和 UI/审计事件
 
 注意：
 
 - `context` 不是完整下一轮 API 请求
 - `context` 不会伪造下一轮 turn 开始时运行时重新注入的 developer 指令、skills、plugins 或其他 Prompt 外壳字段
 - `context` 当前只对较新的 rollout 结构做高保真支持；更早版本不保证能完整复原
-- `context` 默认会保留已实际落盘的 developer / environment-like 注入消息、用户消息、助手消息，以及 compaction / context_compacted 这类上下文转折节点
-- `context` 默认不会保留 reasoning、命令输出、工具输出、search output 这类不属于“模型可见历史候选”的条目
+- `context` 默认会保留用户消息、助手消息、函数/工具调用、函数/工具输出、reasoning（推理项）、web/tool search（网页/工具搜索）相关响应项，以及 compaction（压缩摘要）与 replacement history（替代历史）里的模型可见条目
+- `context` 默认不会保留 `AGENTS.md` 注入、developer 注入、`<environment_context>`，以及 `context_compacted` 这类仅提示性的工作流事件
+- `context` 的 Markdown 详细程度仍由 `--mode` 控制：`timeline` 会显示命令执行和编辑事件但折叠正文输出，`events` 会展开完整输出和 diff
 
 ### Markdown 模式
 
