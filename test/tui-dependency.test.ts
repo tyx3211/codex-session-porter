@@ -1,17 +1,19 @@
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const test = require("node:test");
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import test from "node:test";
+import { expectRecordProperty, readJsonObject, repoRoot } from "./test-support.js";
 
-const packagePath = path.resolve(__dirname, "..", "package.json");
-const tuiSourcePath = path.resolve(__dirname, "..", "src", "tui.tsx");
+const packagePath = path.join(repoRoot, "package.json");
+const tuiSourcePath = path.join(repoRoot, "src", "tui.tsx");
 
 test("tui declares React Ink dependencies instead of enquirer", () => {
-  const pkg = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+  const pkg = readJsonObject(packagePath);
+  const dependencies = expectRecordProperty(pkg, "dependencies");
 
-  assert.equal(typeof pkg.dependencies.ink, "string");
-  assert.equal(typeof pkg.dependencies.react, "string");
-  assert.equal(pkg.dependencies.enquirer, undefined);
+  assert.equal(typeof dependencies.ink, "string");
+  assert.equal(typeof dependencies.react, "string");
+  assert.equal(dependencies.enquirer, undefined);
 });
 
 test("tui source keeps a bounded visible window", () => {

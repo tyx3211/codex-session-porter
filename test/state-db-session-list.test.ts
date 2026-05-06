@@ -1,21 +1,32 @@
-const assert = require("node:assert/strict");
-const { execFile, execFileSync } = require("node:child_process");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const test = require("node:test");
-const { promisify } = require("node:util");
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { cliPath, execFileAsync, writeJsonl } from "./test-support.js";
 
-const execFileAsync = promisify(execFile);
-
-const cliPath = path.resolve(__dirname, "..", "dist", "cli.js");
-
-function writeJsonl(filePath, rows) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, rows.map((row) => JSON.stringify(row)).join("\n") + "\n", "utf8");
+interface StateDbFixtureRow {
+  id: string;
+  rolloutPath: string;
+  createdAt: number;
+  updatedAt: number;
+  source: string;
+  cwd: string;
+  title: string;
+  firstUserMessage: string;
+  archived?: boolean;
+  gitBranch?: string;
 }
 
-function writeRollout(codexDir, name, id, source, cwd, userMessage) {
+function writeRollout(
+  codexDir: string,
+  name: string,
+  id: string,
+  source: string,
+  cwd: string,
+  userMessage: string,
+): string {
   const filePath = path.join(codexDir, "sessions", "2026", "04", "24", name);
   writeJsonl(filePath, [
     {
@@ -40,7 +51,12 @@ function writeRollout(codexDir, name, id, source, cwd, userMessage) {
   return filePath;
 }
 
-function createStateDb(codexDir, rows) {
+/**
+ * 这里保留一个极小的 `node -e` 建库脚本，而不是在测试进程内再包一层
+ * `better-sqlite3` 适配逻辑。测试目标是验证我们自己的会话发现逻辑，不是重复
+ * 验证 SQLite 绑定如何被 TypeScript 包装；因此直接用子进程建夹具最简单也最稳定。
+ */
+function createStateDb(codexDir: string, rows: readonly StateDbFixtureRow[]): void {
   const dbPath = path.join(codexDir, "state_5.sqlite");
   const createSql = `
     CREATE TABLE threads (
@@ -109,15 +125,13 @@ function createStateDb(codexDir, rows) {
     db.close();
   `;
 
-  execFileSync(process.execPath, [
-    "-e",
-    script,
-    dbPath,
-    JSON.stringify(rows),
-  ]);
+  execFileSync(process.execPath, ["-e", script, dbPath, JSON.stringify(rows)]);
 }
 
-function writeSessionIndex(codexDir, rows) {
+function writeSessionIndex(
+  codexDir: string,
+  rows: readonly { id: string; threadName: string; updatedAt: string }[],
+): void {
   writeJsonl(
     path.join(codexDir, "session_index.jsonl"),
     rows.map((row) => ({
@@ -226,11 +240,16 @@ test("--list uses Codex state DB to match resume filtering and display", async (
 
   const lines = stdout.trim().split("\n");
   assert.equal(lines.length, 2);
-  assert.match(lines[0], /Indexed real thread name/);
-  assert.match(lines[0], /cwd=\/tmp\/project-a/);
-  assert.match(lines[0], /branch=main/);
-  assert.match(lines[1], /preview from first user row/);
-  assert.match(lines[1], /cwd=\/tmp\/project-b/);
+
+  const [firstLine, secondLine] = lines;
+  assert.ok(firstLine);
+  assert.ok(secondLine);
+
+  assert.match(firstLine, /Indexed real thread name/);
+  assert.match(firstLine, /cwd=\/tmp\/project-a/);
+  assert.match(firstLine, /branch=main/);
+  assert.match(secondLine, /preview from first user row/);
+  assert.match(secondLine, /cwd=\/tmp\/project-b/);
   assert.doesNotMatch(stdout, /subagent should not appear/);
   assert.doesNotMatch(stdout, /archived should not appear/);
   assert.doesNotMatch(stdout, /missing file should not appear/);

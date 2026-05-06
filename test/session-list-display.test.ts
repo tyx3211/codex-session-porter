@@ -1,21 +1,11 @@
-const assert = require("node:assert/strict");
-const { execFile } = require("node:child_process");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const test = require("node:test");
-const { promisify } = require("node:util");
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { cliPath, execFileAsync, writeJsonl } from "./test-support.js";
 
-const execFileAsync = promisify(execFile);
-
-const cliPath = path.resolve(__dirname, "..", "dist", "cli.js");
-
-function writeJsonl(filePath, rows) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, rows.map((row) => JSON.stringify(row)).join("\n") + "\n", "utf8");
-}
-
-function writeSession(codexDir) {
+function writeSession(codexDir: string): string {
   const sessionPath = path.join(
     codexDir,
     "sessions",
@@ -55,7 +45,7 @@ function writeSession(codexDir) {
   return sessionPath;
 }
 
-function writeSessionWithoutThreadName(codexDir) {
+function writeSessionWithoutThreadName(codexDir: string): string {
   const sessionPath = path.join(
     codexDir,
     "sessions",
@@ -87,7 +77,7 @@ function writeSessionWithoutThreadName(codexDir) {
   return sessionPath;
 }
 
-function writeSessionWithLateThreadName(codexDir) {
+function writeSessionWithLateThreadName(codexDir: string): string {
   const sessionPath = path.join(
     codexDir,
     "sessions",
@@ -96,7 +86,7 @@ function writeSessionWithLateThreadName(codexDir) {
     "24",
     "rollout-2026-04-24T03-02-03-33333333-3333-4333-8333-333333333333.jsonl",
   );
-  const rows = [
+  const rows: unknown[] = [
     {
       timestamp: "2026-04-24T03:02:03.000Z",
       type: "session_meta",
