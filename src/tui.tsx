@@ -9,7 +9,14 @@ import {
   TUI_NAMING_THREAD_PREFIX,
 } from "./export.js";
 import { sessionDisplayLabel } from "./sessions.js";
-import type { CliOptions, DisplayMode, MarkdownMode, SessionInfo, TuiNamingMode } from "./types.js";
+import type {
+  CliOptions,
+  DisplayMode,
+  ExportSource,
+  MarkdownMode,
+  SessionInfo,
+  TuiNamingMode,
+} from "./types.js";
 import { expandHomeDir, formatPathForDisplay, safeStat, truncate } from "./utils.js";
 
 type TuiStep = "pick" | "confirm" | "output" | "naming" | "exporting" | "done";
@@ -38,6 +45,7 @@ const NAMING_MODES: Array<{ value: TuiNamingMode; label: string }> = [
 ];
 
 const MARKDOWN_MODE_CYCLE: MarkdownMode[] = ["default", "timeline", "events"];
+const SOURCE_CYCLE: ExportSource[] = ["history", "context"];
 
 export async function runTui(opts: CliOptions, sessions: SessionInfo[]): Promise<void> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
@@ -54,6 +62,7 @@ function TuiApp({ sessions, opts }: TuiAppProps): React.ReactElement {
   const [step, setStep] = useState<TuiStep>("pick");
   const [cursor, setCursor] = useState(0);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [source, setSource] = useState<ExportSource>(opts.source);
   const [mode, setMode] = useState<MarkdownMode>(opts.mode);
   const [display, setDisplay] = useState<DisplayMode>(opts.display);
   const [sortBy, setSortBy] = useState<SortBy>("updated");
@@ -106,6 +115,7 @@ function TuiApp({ sessions, opts }: TuiAppProps): React.ReactElement {
         cursor,
         setCursor,
         setSortBy,
+        setSource,
         setMode,
         setDisplay,
         setStatus,
@@ -136,6 +146,7 @@ function TuiApp({ sessions, opts }: TuiAppProps): React.ReactElement {
     const namingMode = NAMING_MODES[namingCursor]?.value || TUI_NAMING_ORIGINAL;
     const exportOpts = {
       ...opts,
+      source,
       mode,
       output: outputDir,
       format: "markdown" as const,
@@ -174,11 +185,18 @@ function TuiApp({ sessions, opts }: TuiAppProps): React.ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [step]);
+  }, [step, selectedSessions, namingCursor, opts, outputDir, mode, source]);
 
   return (
     <Box flexDirection="column">
-      <Header mode={mode} display={display} sortBy={sortBy} selectedCount={selected.size} total={total} />
+      <Header
+        source={source}
+        mode={mode}
+        display={display}
+        sortBy={sortBy}
+        selectedCount={selected.size}
+        total={total}
+      />
 
       {step === "pick" && (
         <PickView
@@ -204,6 +222,7 @@ function TuiApp({ sessions, opts }: TuiAppProps): React.ReactElement {
 }
 
 function Header(props: {
+  source: ExportSource;
   mode: MarkdownMode;
   display: DisplayMode;
   sortBy: SortBy;
@@ -214,7 +233,8 @@ function Header(props: {
     <Box flexDirection="column" marginBottom={1}>
       <Text bold>选择要导出的会话</Text>
       <Text>
-        显示：{props.display}  Markdown：{props.mode}  排序：{sortByLabel(props.sortBy)}  已选：
+        来源：{props.source}  显示：{props.display}  Markdown：{props.mode}  排序：
+        {sortByLabel(props.sortBy)}  已选：
         {props.selectedCount}/{props.total}
       </Text>
     </Box>
@@ -307,7 +327,8 @@ function Footer({ status }: { status: string }): React.ReactElement {
   return (
     <Box flexDirection="column" marginTop={1}>
       <Text dimColor wrap="truncate-end">↑/↓ 移动，Space 选择，a 全选/反选，Enter 确认</Text>
-      <Text dimColor wrap="truncate-end">m 切换 default/timeline/events，d 切换线程名/文件名，s/Tab 切换排序，q 退出</Text>
+      <Text dimColor wrap="truncate-end">c 切换 history/context，m 切换 default/timeline/events，d 切换线程名/文件名</Text>
+      <Text dimColor wrap="truncate-end">s/Tab 切换排序，q 退出</Text>
       {status ? <Text color="yellow">{status}</Text> : null}
     </Box>
   );
@@ -324,6 +345,7 @@ function handlePickInput(
   cursor: number,
   setCursor: React.Dispatch<React.SetStateAction<number>>,
   setSortBy: React.Dispatch<React.SetStateAction<SortBy>>,
+  setSource: React.Dispatch<React.SetStateAction<ExportSource>>,
   setMode: React.Dispatch<React.SetStateAction<MarkdownMode>>,
   setDisplay: React.Dispatch<React.SetStateAction<DisplayMode>>,
   setStatus: React.Dispatch<React.SetStateAction<string>>,
@@ -373,6 +395,11 @@ function handlePickInput(
 
   if (input === "m") {
     setMode((current) => nextMarkdownMode(current));
+    return;
+  }
+
+  if (input === "c") {
+    setSource((current) => nextExportSource(current));
     return;
   }
 
@@ -463,6 +490,13 @@ function nextMarkdownMode(current: MarkdownMode): MarkdownMode {
   if (index === -1) return MARKDOWN_MODE_CYCLE[0] || "default";
 
   return MARKDOWN_MODE_CYCLE[(index + 1) % MARKDOWN_MODE_CYCLE.length] || "default";
+}
+
+function nextExportSource(current: ExportSource): ExportSource {
+  const index = SOURCE_CYCLE.indexOf(current);
+  if (index === -1) return SOURCE_CYCLE[0] || "history";
+
+  return SOURCE_CYCLE[(index + 1) % SOURCE_CYCLE.length] || "history";
 }
 
 function handleNamingInput(

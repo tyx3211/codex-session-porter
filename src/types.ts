@@ -2,6 +2,8 @@ export type ExportFormat = "markdown" | "jsonl";
 
 export type MarkdownMode = "default" | "timeline" | "events";
 
+export type ExportSource = "history" | "context";
+
 export type DisplayMode = "thread" | "file";
 
 export type TuiNamingMode = "original" | "thread-prefix";
@@ -9,6 +11,7 @@ export type TuiNamingMode = "original" | "thread-prefix";
 export interface CliOptions {
   codexDir: string;
   format: ExportFormat;
+  source: ExportSource;
   mode: MarkdownMode;
   display: DisplayMode;
   output: string;

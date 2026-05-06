@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import readline from "node:readline";
-import { once } from "node:events";
 import { isRecord, parseJsonRecord, type JsonRecord } from "./guards.js";
+import { readParsedJsonlRows, type JsonlRow } from "./context-source.js";
 import type { CliOptions, SessionMeta } from "./types.js";
 import {
   compactSingleLine,
@@ -553,69 +553,38 @@ function writeWorkflowEventFromResponseItem(
   }
 }
 
-async function detectMessageSources(sourcePath: string): Promise<{
+function detectMessageSourcesFromRows(rows: readonly JsonlRow[]): {
   hasEventUserMessage: boolean;
   hasEventAgentMessage: boolean;
-}> {
-  return await new Promise((resolve) => {
-    const flags = {
-      hasEventUserMessage: false,
-      hasEventAgentMessage: false,
-    };
+} {
+  const flags = {
+    hasEventUserMessage: false,
+    hasEventAgentMessage: false,
+  };
 
-    const input = fs.createReadStream(sourcePath, { encoding: "utf8" });
-    const rl = readline.createInterface({ input, crlfDelay: Infinity });
+  for (let index = 0; index < rows.length && index < 20000; index += 1) {
+    const obj = rows[index]?.obj;
+    if (!obj || obj.type !== "event_msg" || !hasPayloadRecord(obj)) continue;
 
-    let settled = false;
-    let lineCount = 0;
-    const maxLines = 20000;
+    const type = obj.payload.type;
+    if (type === "user_message") flags.hasEventUserMessage = true;
+    if (type === "agent_message") flags.hasEventAgentMessage = true;
 
-    const finish = (): void => {
-      if (settled) return;
-      settled = true;
-      resolve(flags);
-      rl.close();
-      input.destroy();
-    };
+    if (flags.hasEventUserMessage && flags.hasEventAgentMessage) break;
+  }
 
-    rl.on("line", (line) => {
-      if (settled) return;
-      lineCount += 1;
-
-      const trimmed = String(line || "").trim();
-      if (!trimmed) return;
-
-      const obj = parseJsonRecord(trimmed);
-      if (!obj) {
-        if (lineCount >= maxLines) finish();
-        return;
-      }
-
-      if (obj.type === "event_msg" && hasPayloadRecord(obj)) {
-        const type = obj.payload.type;
-        if (type === "user_message") flags.hasEventUserMessage = true;
-        if (type === "agent_message") flags.hasEventAgentMessage = true;
-      }
-
-      if ((flags.hasEventUserMessage && flags.hasEventAgentMessage) || lineCount >= maxLines) {
-        finish();
-      }
-    });
-
-    rl.on("close", () => finish());
-    rl.on("error", () => finish());
-    input.on("error", () => finish());
-  });
+  return flags;
 }
 
-export async function writeMarkdownFromJsonl(
-  sourcePath: string,
+export function writeMarkdownFromRows(
+  rows: readonly JsonlRow[],
+  sourceLabel: string,
   meta: SessionMeta | null,
   options: RenderOptions,
   writer: Writer,
-): Promise<void> {
+): void {
   writer.write("# Codex 聊天记录导出\n\n");
-  writer.write(`- 源文件：\`${sourcePath}\`\n`);
+  writer.write(`- 源文件：\`${sourceLabel}\`\n`);
   if (meta?.id) writer.write(`- sessionId：\`${String(meta.id)}\`\n`);
   if (meta?.timestamp) writer.write(`- 开始时间：\`${String(meta.timestamp)}\`\n`);
   if (meta?.cwd) writer.write(`- cwd：\`${String(meta.cwd)}\`\n`);
@@ -623,109 +592,90 @@ export async function writeMarkdownFromJsonl(
   if (meta?.cli_version) writer.write(`- cli_version：\`${String(meta.cli_version)}\`\n`);
   writer.write("\n---\n\n");
 
-  const messageSources = await detectMessageSources(sourcePath);
+  const messageSources = detectMessageSourcesFromRows(rows);
   const preferEventUserMessages = messageSources.hasEventUserMessage;
   const preferEventAgentMessages = messageSources.hasEventAgentMessage;
   const workflowDetail = eventDetailLevelForMode(options.mode);
 
-  const input = fs.createReadStream(sourcePath, { encoding: "utf8" });
-  const rl = readline.createInterface({ input, crlfDelay: Infinity });
+  for (const row of rows) {
+    const obj = row.obj;
+    const ts = typeof obj.timestamp === "string" ? obj.timestamp : null;
+    const eventContext: EventRenderContext = {
+      ts,
+      eventRef: eventRefFromLineNumber(row.lineNumber),
+      detail: workflowDetail || "summary",
+    };
 
-  try {
-    let lineNumber = 0;
+    if (obj.type === "event_msg" && hasPayloadRecord(obj)) {
+      const payload = obj.payload;
+      const type = payload.type;
 
-    rl.on("line", (line) => {
-      lineNumber += 1;
-
-      const trimmed = String(line || "").trim();
-      if (!trimmed) return;
-
-      const obj = parseJsonRecord(trimmed);
-      if (!obj) return;
-
-      const ts = typeof obj.timestamp === "string" ? obj.timestamp : null;
-      const eventContext: EventRenderContext = {
-        ts,
-        eventRef: eventRefFromLineNumber(lineNumber),
-        detail: workflowDetail || "summary",
-      };
-
-      if (obj.type === "event_msg" && hasPayloadRecord(obj)) {
-        const payload = obj.payload;
-        const type = payload.type;
-
-        if (preferEventUserMessages && type === "user_message") {
-          writeTurn(writer, "用户", ts, payload.message, payload.images);
-          return;
-        }
-
-        if (preferEventAgentMessages && type === "agent_message") {
-          writeTurn(writer, "Codex", ts, payload.message);
-          return;
-        }
-
-        if (options.includeAgentReasoning && type === "agent_reasoning") {
-          writeTurn(writer, "Codex（reasoning）", ts, payload.text);
-          return;
-        }
-
-        if (workflowDetail && writeWorkflowEventFromEventMsg(writer, eventContext, payload)) {
-          return;
-        }
+      if (preferEventUserMessages && type === "user_message") {
+        writeTurn(writer, "用户", ts, payload.message, payload.images);
+        continue;
       }
 
-      if (obj.type === "response_item" && hasPayloadRecord(obj)) {
-        const payload = obj.payload;
-
-        if (workflowDetail && writeWorkflowEventFromResponseItem(writer, eventContext, payload)) {
-          return;
-        }
+      if (preferEventAgentMessages && type === "agent_message") {
+        writeTurn(writer, "Codex", ts, payload.message);
+        continue;
       }
 
-      if (options.includeToolCalls && obj.type === "response_item" && hasPayloadRecord(obj)) {
-        const payload = obj.payload;
-        if (payload.type === "function_call" && typeof payload.name === "string") {
-          const args = typeof payload.arguments === "string" ? payload.arguments : "";
-          writer.write(`### 工具调用：\`${payload.name}\`${ts ? `（${ts}）` : ""}\n\n`);
-          if (args) writer.write("```json\n" + args + "\n```\n\n");
-          return;
-        }
-
-        if (options.includeToolOutputs && payload.type === "function_call_output" && typeof payload.call_id === "string") {
-          const output = typeof payload.output === "string" ? payload.output : "";
-          writer.write(`### 工具输出：\`${payload.call_id}\`${ts ? `（${ts}）` : ""}\n\n`);
-          if (output) writer.write("```text\n" + output + "\n```\n\n");
-          return;
-        }
+      if (options.includeAgentReasoning && type === "agent_reasoning") {
+        writeTurn(writer, "Codex（reasoning）", ts, payload.text);
+        continue;
       }
 
-      if (obj.type === "response_item" && hasPayloadRecord(obj)) {
-        const payload = obj.payload;
-        if (payload.type === "message" && typeof payload.role === "string") {
-          const role = payload.role;
-          if (preferEventUserMessages && role === "user") return;
-          if (preferEventAgentMessages && role === "assistant") return;
+      if (workflowDetail && writeWorkflowEventFromEventMsg(writer, eventContext, payload)) {
+        continue;
+      }
+    }
 
-          const text = extractTextFromResponseMessageContent(payload.content);
-          if (!text.trim()) return;
-          if (!options.includeEnvironmentContext && looksLikeEnvironmentContext(text)) return;
+    if (obj.type === "response_item" && hasPayloadRecord(obj)) {
+      const payload = obj.payload;
 
-          if (role === "user") {
-            writeTurn(writer, "用户", ts, text);
-            return;
-          }
+      if (workflowDetail && writeWorkflowEventFromResponseItem(writer, eventContext, payload)) {
+        continue;
+      }
+    }
 
-          if (role === "assistant") {
-            writeTurn(writer, "Codex", ts, text);
-          }
+    if (options.includeToolCalls && obj.type === "response_item" && hasPayloadRecord(obj)) {
+      const payload = obj.payload;
+      if (payload.type === "function_call" && typeof payload.name === "string") {
+        const args = typeof payload.arguments === "string" ? payload.arguments : "";
+        writer.write(`### 工具调用：\`${payload.name}\`${ts ? `（${ts}）` : ""}\n\n`);
+        if (args) writer.write("```json\n" + args + "\n```\n\n");
+        continue;
+      }
+
+      if (options.includeToolOutputs && payload.type === "function_call_output" && typeof payload.call_id === "string") {
+        const output = typeof payload.output === "string" ? payload.output : "";
+        writer.write(`### 工具输出：\`${payload.call_id}\`${ts ? `（${ts}）` : ""}\n\n`);
+        if (output) writer.write("```text\n" + output + "\n```\n\n");
+        continue;
+      }
+    }
+
+    if (obj.type === "response_item" && hasPayloadRecord(obj)) {
+      const payload = obj.payload;
+      if (payload.type === "message" && typeof payload.role === "string") {
+        const role = payload.role;
+        if (preferEventUserMessages && role === "user") continue;
+        if (preferEventAgentMessages && role === "assistant") continue;
+
+        const text = extractTextFromResponseMessageContent(payload.content);
+        if (!text.trim()) continue;
+        if (!options.includeEnvironmentContext && looksLikeEnvironmentContext(text)) continue;
+
+        if (role === "user") {
+          writeTurn(writer, "用户", ts, text);
+          continue;
+        }
+
+        if (role === "assistant") {
+          writeTurn(writer, "Codex", ts, text);
         }
       }
-    });
-
-    await once(rl, "close");
-  } finally {
-    rl.close();
-    input.destroy();
+    }
   }
 }
 
@@ -734,8 +684,18 @@ export async function renderMarkdownFromJsonl(
   meta: SessionMeta | null,
   options: RenderOptions,
 ): Promise<string> {
+  const rows = await readParsedJsonlRows(sourcePath);
+  return renderMarkdownFromRows(rows, sourcePath, meta, options);
+}
+
+export function renderMarkdownFromRows(
+  rows: readonly JsonlRow[],
+  sourceLabel: string,
+  meta: SessionMeta | null,
+  options: RenderOptions,
+): string {
   const chunks: string[] = [];
-  await writeMarkdownFromJsonl(sourcePath, meta, options, {
+  writeMarkdownFromRows(rows, sourceLabel, meta, options, {
     write: (text) => chunks.push(text),
   });
 
@@ -773,7 +733,7 @@ export async function readJsonlForSync(
       resolve(lines.join("\n"));
     };
 
-    rl.on("line", (line) => {
+    rl.on("line", (line: string) => {
       const trimmed = String(line || "");
       if (!trimmed.trim()) {
         lines.push(line);
@@ -793,8 +753,8 @@ export async function readJsonlForSync(
     });
 
     rl.on("close", () => finish());
-    rl.on("error", (err) => finish(err));
-    input.on("error", (err) => finish(err));
+    rl.on("error", (err: Error) => finish(err));
+    input.on("error", (err: Error) => finish(err));
   });
 }
 

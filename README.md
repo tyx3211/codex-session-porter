@@ -11,6 +11,7 @@ Codex Session Porter 是一个面向 OpenAI Codex CLI / Codex VS Code 会话历�
 ### 特性
 
 - 与 `codex resume` 接近的会话发现逻辑：优先读取 Codex `state_*.sqlite`，并使用 `session_index.jsonl` 回退补全线程名。
+- 支持 `history` / `context` 两层来源模式；`context` 会导出当前最新有效的 resume context（恢复上下文），而不是原始全量历史。
 - 支持 `default`、`timeline` 和 `events` 三种 Markdown 模式；`timeline` 会保留完整工作流事件但折叠命令正文输出与详细 diff，`events` 会展开完整事件细节。
 - TUI 支持多选会话、按 `Updated` / `Created` 排序、显示 `Created`、`Updated`、`Branch`、`Project`、`Conversation` 列。
 - TUI 导出时可选择按线程名作为文件名前缀，线程名前缀最多保留 50 个 UTF-8 字节。
@@ -62,6 +63,9 @@ cce --list --display file
 # 导出最新会话
 cce --latest --output ./latest.md
 
+# 导出最新会话的当前最新有效 context
+cce --latest --source context --output ./latest-context.md
+
 # 导出指定索引会话
 cce --pick 1,3 --output ./exports
 
@@ -93,6 +97,7 @@ cce --latest \
 - `--input <file>`：直接指定一个或多个 `.jsonl` 文件
 - `--list`：打印会话索引列表
 - `--format <markdown|jsonl>`：导出格式，默认 `markdown`
+- `--source <history|context>`：导出来源，默认 `history`
 - `--mode <default|timeline|events>`：Markdown 渲染模式，默认 `default`
 - `--display <thread|file>`：会话列表显示模式，默认 `thread`
 - `--output <path>`：输出路径；单会话可为文件，多会话建议为目录
@@ -107,11 +112,23 @@ cce --latest \
 - `↑` / `↓`：移动光标
 - `Space`：选中或取消选中当前会话
 - `a`：全选或反选
+- `c`：切换 `history` / `context` 导出来源
 - `m`：切换 `default` / `timeline` / `events` Markdown 模式
 - `d`：切换线程名 / 文件名显示
 - `s` 或 `Tab`：切换 `Updated` / `Created` 排序
 - `Enter`：确认选择
 - `q` 或 `Esc`：退出
+
+### 两层模式
+
+- `history`：导出原始 rollout / 历史事件流
+- `context`：导出当前最新有效的 resume context，也就是会话现在如果被 `codex resume` 恢复后，会重建出的有效历史
+
+注意：
+
+- `context` 不是完整下一轮 API 请求
+- `context` 不会伪造运行时重新注入的 developer 指令、skills、plugins 或环境上下文
+- `context` 目前只导出“最终最新有效状态”，不支持按任意 `event_ref` 查看历史时点上下文
 
 ### Markdown 模式
 
@@ -162,6 +179,7 @@ The goal is not to reproduce the full rich UI from Codex. Instead, it turns usef
 ### Features
 
 - Session discovery close to `codex resume`: reads Codex `state_*.sqlite` first and falls back to `session_index.jsonl` for thread names.
+- Two source layers: `history` and `context`. `context` exports the latest effective resume context instead of the raw full history.
 - Three Markdown modes: `default`, `timeline`, and `events`. `timeline` keeps the workflow event stream but hides command body output and detailed diffs, while `events` expands the full event details.
 - TUI picker with multi-select, `Updated` / `Created` sorting, and `Created`, `Updated`, `Branch`, `Project`, `Conversation` columns.
 - Optional thread-name file prefix in TUI exports, capped at 50 UTF-8 bytes.
@@ -213,6 +231,9 @@ cce --list --display file
 # Export the latest session
 cce --latest --output ./latest.md
 
+# Export the latest effective context for the latest session
+cce --latest --source context --output ./latest-context.md
+
 # Export selected sessions by index
 cce --pick 1,3 --output ./exports
 
@@ -244,6 +265,7 @@ cce --latest \
 - `--input <file>`: pass one or more `.jsonl` files directly
 - `--list`: print session index list
 - `--format <markdown|jsonl>`: export format, defaults to `markdown`
+- `--source <history|context>`: export source, defaults to `history`
 - `--mode <default|timeline|events>`: Markdown rendering mode, defaults to `default`
 - `--display <thread|file>`: list display mode, defaults to `thread`
 - `--output <path>`: output path; a single session can use a file path, multiple sessions should use a directory
@@ -258,11 +280,23 @@ cce --latest \
 - `↑` / `↓`: move cursor
 - `Space`: select or deselect the current session
 - `a`: select all or invert selection
+- `c`: switch between `history` and `context`
 - `m`: toggle `default` / `timeline` / `events` Markdown mode
 - `d`: toggle thread-name / file-name display
 - `s` or `Tab`: toggle `Updated` / `Created` sorting
 - `Enter`: confirm selection
 - `q` or `Esc`: quit
+
+### Source Layers
+
+- `history`: export the raw rollout / history stream
+- `context`: export the latest effective resume context, meaning the history Codex would rebuild if the thread were resumed now
+
+Notes:
+
+- `context` is not the full next API request payload
+- `context` does not fabricate runtime-reinjected developer instructions, skills, plugins, or environment context
+- `context` currently exports only the latest effective state, not arbitrary point-in-time context snapshots
 
 ### Markdown Modes
 

@@ -19,6 +19,7 @@ export type {
   DisplayMode,
   ExportFormat,
   ExportOptions,
+  ExportSource,
   MarkdownMode,
   SessionDisplayInfo,
   SessionInfo,

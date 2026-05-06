@@ -26,6 +26,7 @@ Codex Chat Export CLI
 
 导出配置：
   --format <markdown|jsonl>   导出格式，默认 markdown
+  --source <history|context>  导出来源；context 表示当前最新有效上下文，而非完整下一轮 API 请求
   --mode <default|timeline|events>
                               Markdown 渲染模式；timeline 为中等详细时间线，events 为完整事件展开
   --display <thread|file>     会话列表显示模式，默认 thread
@@ -54,19 +55,22 @@ Codex Chat Export CLI
   # 3) 导出最新会话，使用中等详细时间线模式
   cce --latest --mode timeline --output ./latest-timeline.md
 
-  # 4) 导出最新会话，并展开 Codex VS Code 的命令执行 / patch 新事件
+  # 4) 导出最新会话的当前最新有效上下文
+  cce --latest --source context --output ./latest-context.md
+
+  # 5) 导出最新会话，并展开 Codex VS Code 的命令执行 / patch 新事件
   cce --latest --mode events --output ./latest-events.md
 
-  # 5) 打开交互式会话选择器
+  # 6) 打开交互式会话选择器
   cce tui --mode events --output ./exports
 
-  # 6) 按线程名/首条消息列出会话
+  # 7) 按线程名/首条消息列出会话
   cce --list --display thread
 
-  # 7) 导出指定会话索引到目录
+  # 8) 导出指定会话索引到目录
   cce --pick 1,3 --output ./exports
 
-  # 8) 直接导出某个 JSONL 文件
+  # 9) 直接导出某个 JSONL 文件
   cce --input ~/.codex/sessions/2026/02/02/rollout-xxx.jsonl --output ./one.md
 `;
   process.stdout.write(text);
@@ -76,6 +80,7 @@ export function parseArgs(argv: string[]): CliOptions {
   const opts: CliOptions = {
     codexDir: path.join(os.homedir(), ".codex"),
     format: "markdown",
+    source: "history",
     mode: "default",
     display: "thread",
     output: "",
@@ -113,6 +118,11 @@ export function parseArgs(argv: string[]): CliOptions {
         i += 1;
         if (i >= argv.length) throw new CliError("--format 需要参数");
         opts.format = parseFormat(argv[i] || "");
+        break;
+      case "--source":
+        i += 1;
+        if (i >= argv.length) throw new CliError("--source 需要参数");
+        opts.source = parseSource(argv[i] || "");
         break;
       case "--mode":
         i += 1;
@@ -180,6 +190,13 @@ function parseFormat(value: string): CliOptions["format"] {
   if (normalized === "markdown" || normalized === "jsonl") return normalized;
 
   throw new CliError("--format 仅支持 markdown/jsonl");
+}
+
+function parseSource(value: string): CliOptions["source"] {
+  const normalized = value.toLowerCase();
+  if (normalized === "history" || normalized === "context") return normalized;
+
+  throw new CliError("--source 仅支持 history/context");
 }
 
 function parseMode(value: string): CliOptions["mode"] {

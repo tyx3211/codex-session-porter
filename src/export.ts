@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ExportOptions, SessionInfo, TuiNamingMode } from "./types.js";
-import { readJsonlForSync, renderMarkdownFromJsonl } from "./render.js";
+import { parsedRowsToJsonl, readParsedJsonlRows, reconstructLatestContextRows } from "./context-source.js";
+import { readJsonlForSync, renderMarkdownFromJsonl, renderMarkdownFromRows } from "./render.js";
 import { expandHomeDir, safeStat, sanitizeFileNameSegment, truncateUtf8Bytes } from "./utils.js";
 
 export const TUI_NAMING_ORIGINAL: TuiNamingMode = "original";
@@ -38,22 +39,36 @@ export function resolveOutputPath(selected: SessionInfo[], opts: ExportOptions, 
 
 export async function exportOneSession(sessionInfo: SessionInfo, outPath: string, opts: ExportOptions): Promise<void> {
   if (opts.format === "jsonl") {
-    const jsonlText = await readJsonlForSync(sessionInfo.filePath, {
-      includeToolOutputs: opts.includeToolOutputs,
-      includeEnvironmentContext: opts.includeEnvironmentContext,
-    });
+    const jsonlText =
+      opts.source === "context"
+        ? parsedRowsToJsonl(reconstructLatestContextRows(await readParsedJsonlRows(sessionInfo.filePath)))
+        : await readJsonlForSync(sessionInfo.filePath, {
+            includeToolOutputs: opts.includeToolOutputs,
+            includeEnvironmentContext: opts.includeEnvironmentContext,
+          });
+
     await fs.promises.mkdir(path.dirname(outPath), { recursive: true });
     await fs.promises.writeFile(outPath, jsonlText, "utf8");
     return;
   }
 
-  const markdownText = await renderMarkdownFromJsonl(sessionInfo.filePath, sessionInfo.meta, {
+  const renderOptions = {
     includeAgentReasoning: opts.includeAgentReasoning,
     includeToolCalls: opts.includeToolCalls,
     includeToolOutputs: opts.includeToolOutputs,
     includeEnvironmentContext: opts.includeEnvironmentContext,
     mode: opts.mode,
-  });
+  } as const;
+
+  const markdownText =
+    opts.source === "context"
+      ? renderMarkdownFromRows(
+          reconstructLatestContextRows(await readParsedJsonlRows(sessionInfo.filePath)),
+          `${sessionInfo.filePath}#context`,
+          sessionInfo.meta,
+          renderOptions,
+        )
+      : await renderMarkdownFromJsonl(sessionInfo.filePath, sessionInfo.meta, renderOptions);
 
   await fs.promises.mkdir(path.dirname(outPath), { recursive: true });
   await fs.promises.writeFile(outPath, markdownText, "utf8");
