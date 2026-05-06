@@ -55,6 +55,36 @@ function extendedEventRows(): readonly unknown[] {
       },
     },
     {
+      timestamp: "2026-04-23T00:00:01.500Z",
+      type: "event_msg",
+      payload: {
+        type: "exec_command_end",
+        call_id: "call_list",
+        command: ["/bin/bash", "-lc", "fd . src"],
+        cwd: "/tmp/project",
+        parsed_cmd: [{ type: "list_files", cmd: "fd . src" }],
+        aggregated_output: "src/index.ts\nsrc/render.ts\n",
+        exit_code: 0,
+        duration: { secs: 0, nanos: 450000000 },
+        status: "completed",
+      },
+    },
+    {
+      timestamp: "2026-04-23T00:00:01.750Z",
+      type: "event_msg",
+      payload: {
+        type: "exec_command_end",
+        call_id: "call_unknown",
+        command: ["/bin/bash", "-lc", "git status --short"],
+        cwd: "/tmp/project",
+        parsed_cmd: [{ type: "unknown", cmd: "git status --short" }],
+        aggregated_output: " M src/render.ts\n",
+        exit_code: 0,
+        duration: { secs: 0, nanos: 5000000 },
+        status: "completed",
+      },
+    },
+    {
       timestamp: "2026-04-23T00:00:02.000Z",
       type: "event_msg",
       payload: {
@@ -172,6 +202,13 @@ function extractEventRef(markdown: string, heading: string): string {
   return match[1] || "";
 }
 
+function extractSection(markdown: string, heading: string): string {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const match = markdown.match(new RegExp(`(${escaped}[\\s\\S]*?)(?=\\n### |$)`));
+  assert.ok(match, `expected section for ${heading}`);
+  return match[1] || "";
+}
+
 test("--mode events renders the meaningful workflow events into markdown", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-chat-cli-events-"));
   const inputPath = path.join(tmpDir, "rollout-test.jsonl");
@@ -193,15 +230,28 @@ test("--mode events renders the meaningful workflow events into markdown", async
   assert.match(markdown, /### 网页搜索/);
   assert.match(markdown, /codex timeline event lookup/);
   assert.match(markdown, /### 任务开始/);
-  assert.match(markdown, /### 命令执行：`printf hi`/);
-  assert.match(markdown, /- action：`read`/);
-  assert.match(markdown, /- cwd：`\/tmp\/project`/);
-  assert.match(markdown, /- exit_code：`0`/);
-  assert.match(markdown, /- duration：`1\.250s`/);
+  assert.match(markdown, /### action：`read`/);
+  const readSection = extractSection(markdown, "### action：`read`");
+  assert.match(readSection, /- cwd：`\/tmp\/project`/);
+  assert.match(readSection, /- cmd：`printf hi`/);
+  assert.doesNotMatch(readSection, /- exit_code：`0`/);
+  assert.match(markdown, /### action：`list_files`/);
+  const listSection = extractSection(markdown, "### action：`list_files`");
+  assert.match(listSection, /- cmd：`fd \. src`/);
+  assert.doesNotMatch(listSection, /- duration：`0\.450s`/);
+  assert.match(markdown, /### action：`unknown` - `git status --short`/);
+  const unknownSection = extractSection(markdown, "### action：`unknown` - `git status --short`");
+  assert.doesNotMatch(unknownSection, /- cmd：/);
+  assert.match(unknownSection, /- exit_code：`0`/);
+  assert.match(unknownSection, /- duration：`0\.005s`/);
   assert.match(markdown, /- event_ref：`E\d{6}`/);
-  assert.match(markdown, /~~~text\nhi\n```js\nconsole\.log\(1\);\n```\n~~~/);
-  assert.match(markdown, /### 补丁应用：`call_patch`/);
+  assert.doesNotMatch(readSection, /#### output/);
+  assert.doesNotMatch(listSection, /#### output/);
+  assert.match(unknownSection, /~~~text\n M src\/render\.ts\n~~~/);
+  assert.match(markdown, /### action：`edit_file`/);
+  const editSection = extractSection(markdown, "### action：`edit_file`");
   assert.match(markdown, /- success：`true`/);
+  assert.match(editSection, /- event_ref：`E\d{6}`/);
   assert.match(markdown, /#### add `\/tmp\/project\/demo\.txt`/);
   assert.match(markdown, /~~~diff\n--- \/dev\/null\n\+\+\+ \/tmp\/project\/demo\.txt\n\+hello\n\+world\n~~~/);
   assert.match(markdown, /### 上下文压缩/);
@@ -249,10 +299,17 @@ test("--mode timeline keeps workflow events but hides command output and diff bo
   ]);
 
   const markdown = fs.readFileSync(outputPath, "utf8");
-  assert.match(markdown, /### 命令执行：`printf hi`/);
+  assert.match(markdown, /### action：`read`/);
   assert.match(markdown, /- event_ref：`E\d{6}`/);
   assert.doesNotMatch(markdown, /#### output/);
   assert.doesNotMatch(markdown, /console\.log\(1\)/);
+  const readSection = extractSection(markdown, "### action：`read`");
+  assert.match(readSection, /- cmd：`printf hi`/);
+  assert.doesNotMatch(readSection, /- exit_code：`0`/);
+  assert.match(markdown, /### action：`unknown` - `git status --short`/);
+  const unknownSection = extractSection(markdown, "### action：`unknown` - `git status --short`");
+  assert.match(unknownSection, /- exit_code：`0`/);
+  assert.doesNotMatch(unknownSection, /#### output/);
   assert.match(markdown, /#### add `\/tmp\/project\/demo\.txt`/);
   assert.match(markdown, /- diff_stat：`\+2 \/ -0`/);
   assert.doesNotMatch(markdown, /~~~diff/);
@@ -278,8 +335,8 @@ test("timeline event_ref can be used to recover hidden exec output and diff deta
   ]);
 
   const markdown = fs.readFileSync(timelinePath, "utf8");
-  const execRef = extractEventRef(markdown, "### 命令执行：`printf hi`");
-  const patchRef = extractEventRef(markdown, "### 补丁应用：`call_patch`");
+  const execRef = extractEventRef(markdown, "### action：`unknown` - `git status --short`");
+  const patchRef = extractEventRef(markdown, "### action：`edit_file`");
 
   const scriptPath = path.join(
     process.cwd(),
@@ -296,8 +353,8 @@ test("timeline event_ref can be used to recover hidden exec output and diff deta
     "--event-ref",
     execRef,
   ]);
-  assert.match(execReveal.stdout, /### 命令执行：`printf hi`/);
-  assert.match(execReveal.stdout, /console\.log\(1\)/);
+  assert.match(execReveal.stdout, /### action：`unknown` - `git status --short`/);
+  assert.match(execReveal.stdout, / M src\/render\.ts/);
 
   const patchReveal = await execFileAsync(process.execPath, [
     scriptPath,
@@ -306,7 +363,7 @@ test("timeline event_ref can be used to recover hidden exec output and diff deta
     "--event-ref",
     patchRef,
   ]);
-  assert.match(patchReveal.stdout, /### 补丁应用：`call_patch`/);
+  assert.match(patchReveal.stdout, /### action：`edit_file`/);
   assert.match(patchReveal.stdout, /\+hello/);
   assert.match(patchReveal.stdout, /\+world/);
 });

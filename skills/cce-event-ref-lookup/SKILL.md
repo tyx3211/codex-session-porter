@@ -7,15 +7,15 @@ description: Use when reading a cce timeline markdown export and an agent needs 
 
 ## Overview
 
-`cce --mode timeline` 会故意隐藏命令正文输出和完整 diff，只保留工作流时间线与 `event_ref`。  
-当我们需要追某次命令的真实回显，或者追某次补丁的完整改动内容时，不要靠全文搜索 Markdown，直接用 `event_ref` 回查原始 JSONL。
+`cce --mode timeline` 会故意隐藏 `unknown` 动作的命令正文输出和完整 diff，只保留工作流时间线、`action` 标题与 `event_ref`。  
+当我们需要追某次 `unknown` 动作的真实回显，或者追某次 `edit_file` 事件的完整改动内容时，不要靠全文搜索 Markdown，直接用 `event_ref` 回查原始 JSONL。
 
 核心原则：`event_ref` 是精确定位键，不是模糊标签。只要 `timeline` Markdown 还保留了 `- 源文件：...` 这一行，脚本就能确定性回查。
 
 ## When To Use
 
 - 正在看 `--mode timeline` 导出的 Markdown
-- 看到某个 `### 命令执行` 或 `### 补丁应用` 事件，但正文被裁剪了
+- 看到某个 `### action：\`unknown\`` 或 `### action：\`edit_file\`` 事件，但正文被裁剪了
 - 需要恢复该事件在 `--mode events` 下会写出的完整命令输出或 diff
 - 需要把 `timeline` 里的某个事件，和原始 JSONL 的单条记录准确对应起来
 
@@ -54,8 +54,8 @@ node skills/cce-event-ref-lookup/scripts/reveal-event-ref.mjs \
 
 ## What The Script Returns
 
-- 对 `exec_command_end`：输出完整命令事件，包括命令元数据与被 `timeline` 隐藏的正文输出
-- 对 `patch_apply_end`：输出完整补丁事件，包括每个文件的完整 diff
+- 对 `exec_command_end`：输出完整动作事件；如果是 `unknown` 动作，会带回被 `timeline` 隐藏的正文输出
+- 对 `patch_apply_end`：输出完整 `edit_file` 事件，包括每个文件的完整 diff
 - 对其他事件：输出该条原始 JSON 记录，避免脚本擅自猜测展示语义
 
 ## Common Mistakes

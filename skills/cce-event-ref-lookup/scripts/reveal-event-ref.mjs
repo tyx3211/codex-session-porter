@@ -160,6 +160,17 @@ function commandActionKind(payload) {
   return "";
 }
 
+function normalizedCommandActionKind(payload) {
+  const action = commandActionKind(payload);
+  if (action) return action;
+
+  return "unknown";
+}
+
+function isBuiltinCommandAction(action) {
+  return action !== "" && action !== "unknown";
+}
+
 function fileChangeDiff(filePath, change) {
   const record = isRecord(change) ? change : {};
   const type = typeof record.type === "string" ? record.type : "unknown";
@@ -203,28 +214,23 @@ function renderEventMarkdown(record, eventRef) {
   }
 
   if (payload.type === "exec_command_end") {
-    let out = `### 命令执行：\`${commandLabel(payload)}\`${timestamp ? `（${timestamp}）` : ""}\n\n`;
+    const label = commandLabel(payload);
+    const action = normalizedCommandActionKind(payload);
+    const title = isBuiltinCommandAction(action) ? `action：\`${action}\`` : `action：\`unknown\` - \`${label}\``;
+    let out = `### ${title}${timestamp ? `（${timestamp}）` : ""}\n\n`;
     out += `- event_ref：\`${eventRef}\`\n`;
-
-    const action = commandActionKind(payload);
-    if (action) out += `- action：\`${action}\`\n`;
     if (typeof payload.cwd === "string" && payload.cwd) out += `- cwd：\`${payload.cwd}\`\n`;
+    if (isBuiltinCommandAction(action)) {
+      out += `- cmd：\`${label}\`\n\n`;
+      return out;
+    }
+
     if (Object.prototype.hasOwnProperty.call(payload, "exit_code")) out += `- exit_code：\`${String(payload.exit_code)}\`\n`;
     if (typeof payload.status === "string" && payload.status) out += `- status：\`${payload.status}\`\n`;
 
     const duration = formatDuration(payload.duration);
     if (duration) out += `- duration：\`${duration}\`\n`;
     out += "\n";
-
-    if (Array.isArray(payload.command) && payload.command.length > 0) {
-      out += "#### command\n\n";
-      out += fencedBlock("json", JSON.stringify(payload.command, null, 2));
-    }
-
-    if (Array.isArray(payload.parsed_cmd) && payload.parsed_cmd.length > 0) {
-      out += "#### parsed_cmd\n\n";
-      out += fencedBlock("json", JSON.stringify(payload.parsed_cmd, null, 2));
-    }
 
     const output =
       typeof payload.aggregated_output === "string" && payload.aggregated_output
@@ -240,10 +246,10 @@ function renderEventMarkdown(record, eventRef) {
   }
 
   if (payload.type === "patch_apply_end") {
-    const callId = typeof payload.call_id === "string" && payload.call_id ? payload.call_id : "unknown";
-    let out = `### 补丁应用：\`${callId}\`${timestamp ? `（${timestamp}）` : ""}\n\n`;
+    let out = `### action：\`edit_file\`${timestamp ? `（${timestamp}）` : ""}\n\n`;
     out += `- event_ref：\`${eventRef}\`\n`;
     if (Object.prototype.hasOwnProperty.call(payload, "success")) out += `- success：\`${String(payload.success)}\`\n`;
+    if (typeof payload.call_id === "string" && payload.call_id) out += `- call_id：\`${payload.call_id}\`\n`;
     out += "\n";
 
     if (typeof payload.stdout === "string" && payload.stdout.trim()) {

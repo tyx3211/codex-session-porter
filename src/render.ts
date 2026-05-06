@@ -106,6 +106,17 @@ function commandActionKind(payload: JsonRecord): string {
   return "";
 }
 
+function normalizedCommandActionKind(payload: JsonRecord): string {
+  const action = commandActionKind(payload);
+  if (action) return action;
+
+  return "unknown";
+}
+
+function isBuiltinCommandAction(action: string): boolean {
+  return action !== "" && action !== "unknown";
+}
+
 function fenceForContent(text: string): string {
   const matches = text.match(/~{3,}/gu) || [];
   const length = matches.reduce((max, match) => Math.max(max, match.length + 1), 3);
@@ -249,11 +260,17 @@ function eventRefFromLineNumber(lineNumber: number): string {
 
 function writeExecCommandEvent(writer: Writer, context: EventRenderContext, payload: JsonRecord): void {
   const label = commandLabel(payload);
-  writeEventHeader(writer, `命令执行：\`${label}\``, context);
+  const action = normalizedCommandActionKind(payload);
+  const isBuiltinAction = isBuiltinCommandAction(action);
+  const title = isBuiltinAction ? `action：\`${action}\`` : `action：\`unknown\` - \`${label}\``;
+  writeEventHeader(writer, title, context);
 
-  const action = commandActionKind(payload);
-  if (action) writeCodeMetadataLine(writer, "action", action);
   if (typeof payload.cwd === "string" && payload.cwd) writeCodeMetadataLine(writer, "cwd", payload.cwd);
+  if (isBuiltinAction) {
+    writeCodeMetadataLine(writer, "cmd", label);
+    writer.write("\n");
+    return;
+  }
 
   if (Object.prototype.hasOwnProperty.call(payload, "exit_code")) {
     writeCodeMetadataLine(writer, "exit_code", String(payload.exit_code));
@@ -269,16 +286,6 @@ function writeExecCommandEvent(writer: Writer, context: EventRenderContext, payl
 
   if (context.detail === "summary") return;
 
-  if (Array.isArray(payload.command) && payload.command.length > 0) {
-    writer.write("#### command\n\n");
-    writer.write(fencedBlock("json", JSON.stringify(payload.command, null, 2)));
-  }
-
-  if (Array.isArray(payload.parsed_cmd) && payload.parsed_cmd.length > 0) {
-    writer.write("#### parsed_cmd\n\n");
-    writer.write(fencedBlock("json", JSON.stringify(payload.parsed_cmd, null, 2)));
-  }
-
   const output =
     typeof payload.aggregated_output === "string" && payload.aggregated_output
       ? payload.aggregated_output
@@ -291,11 +298,14 @@ function writeExecCommandEvent(writer: Writer, context: EventRenderContext, payl
 }
 
 function writePatchApplyEvent(writer: Writer, context: EventRenderContext, payload: JsonRecord): void {
-  const callId = typeof payload.call_id === "string" && payload.call_id ? payload.call_id : "unknown";
-  writeEventHeader(writer, `补丁应用：\`${callId}\``, context);
+  writeEventHeader(writer, "action：`edit_file`", context);
 
   if (Object.prototype.hasOwnProperty.call(payload, "success")) {
     writeCodeMetadataLine(writer, "success", String(payload.success));
+  }
+
+  if (typeof payload.call_id === "string" && payload.call_id) {
+    writeCodeMetadataLine(writer, "call_id", payload.call_id);
   }
 
   writer.write("\n");
