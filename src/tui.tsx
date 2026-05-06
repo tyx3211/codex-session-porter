@@ -37,6 +37,8 @@ const NAMING_MODES: Array<{ value: TuiNamingMode; label: string }> = [
   },
 ];
 
+const MARKDOWN_MODE_CYCLE: MarkdownMode[] = ["default", "timeline", "events"];
+
 export async function runTui(opts: CliOptions, sessions: SessionInfo[]): Promise<void> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error("tui 需要在交互式终端中运行");
@@ -305,7 +307,7 @@ function Footer({ status }: { status: string }): React.ReactElement {
   return (
     <Box flexDirection="column" marginTop={1}>
       <Text dimColor wrap="truncate-end">↑/↓ 移动，Space 选择，a 全选/反选，Enter 确认</Text>
-      <Text dimColor wrap="truncate-end">m 切换 default/events，d 切换线程名/文件名，s/Tab 切换排序，q 退出</Text>
+      <Text dimColor wrap="truncate-end">m 切换 default/timeline/events，d 切换线程名/文件名，s/Tab 切换排序，q 退出</Text>
       {status ? <Text color="yellow">{status}</Text> : null}
     </Box>
   );
@@ -370,7 +372,7 @@ function handlePickInput(
   }
 
   if (input === "m") {
-    setMode((current) => (current === "events" ? "default" : "events"));
+    setMode((current) => nextMarkdownMode(current));
     return;
   }
 
@@ -450,6 +452,17 @@ function handleOutputInput(
   if (input && !key.ctrl) {
     setOutputInput((current) => `${current}${input}`);
   }
+}
+
+/**
+ * 这里把 TUI 的 Markdown 模式切换集中成一个小函数，避免后续新增模式时，
+ * 事件处理分支、页脚提示和默认值各自维护一套 if/else，最终出现行为与文案不一致。
+ */
+function nextMarkdownMode(current: MarkdownMode): MarkdownMode {
+  const index = MARKDOWN_MODE_CYCLE.indexOf(current);
+  if (index === -1) return MARKDOWN_MODE_CYCLE[0] || "default";
+
+  return MARKDOWN_MODE_CYCLE[(index + 1) % MARKDOWN_MODE_CYCLE.length] || "default";
 }
 
 function handleNamingInput(

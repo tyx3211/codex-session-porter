@@ -1,6 +1,6 @@
 export type ExportFormat = "markdown" | "jsonl";
 
-export type MarkdownMode = "default" | "events";
+export type MarkdownMode = "default" | "timeline" | "events";
 
 export type DisplayMode = "thread" | "file";
 

@@ -18,6 +18,28 @@ function extendedEventRows(): readonly unknown[] {
       },
     },
     {
+      timestamp: "2026-04-23T00:00:00.500Z",
+      type: "response_item",
+      payload: {
+        type: "web_search_call",
+        status: "completed",
+        action: {
+          type: "search",
+          query: "codex timeline event lookup",
+        },
+      },
+    },
+    {
+      timestamp: "2026-04-23T00:00:00.750Z",
+      type: "event_msg",
+      payload: {
+        type: "task_started",
+        turn_id: "turn_001",
+        model_context_window: 258400,
+        collaboration_mode_kind: "default",
+      },
+    },
+    {
       timestamp: "2026-04-23T00:00:01.000Z",
       type: "event_msg",
       payload: {
@@ -25,7 +47,7 @@ function extendedEventRows(): readonly unknown[] {
         call_id: "call_exec",
         command: ["/bin/bash", "-lc", "printf hi"],
         cwd: "/tmp/project",
-        parsed_cmd: [{ type: "unknown", cmd: "printf hi" }],
+        parsed_cmd: [{ type: "read", cmd: "printf hi" }],
         aggregated_output: "hi\n```js\nconsole.log(1);\n```\n",
         exit_code: 0,
         duration: { secs: 1, nanos: 250000000 },
@@ -49,10 +71,108 @@ function extendedEventRows(): readonly unknown[] {
         },
       },
     },
+    {
+      timestamp: "2026-04-23T00:00:02.500Z",
+      type: "event_msg",
+      payload: {
+        type: "context_compacted",
+      },
+    },
+    {
+      timestamp: "2026-04-23T00:00:02.750Z",
+      type: "event_msg",
+      payload: {
+        type: "thread_rolled_back",
+        num_turns: 1,
+      },
+    },
+    {
+      timestamp: "2026-04-23T00:00:03.000Z",
+      type: "event_msg",
+      payload: {
+        type: "web_search_end",
+        call_id: "ws_001",
+        query: "codex timeline event lookup",
+        action: {
+          type: "search",
+        },
+      },
+    },
+    {
+      timestamp: "2026-04-23T00:00:03.250Z",
+      type: "event_msg",
+      payload: {
+        type: "mcp_tool_call_end",
+        call_id: "mcp_001",
+        invocation: {
+          server: "pdf",
+          tool: "answer-pdf-question",
+          arguments: {
+            filePath: "/tmp/spec.pdf",
+            question: "What is the title?",
+          },
+        },
+        duration: {
+          secs: 3,
+          nanos: 120000000,
+        },
+        result: {
+          Ok: "Spec title is Demo",
+        },
+      },
+    },
+    {
+      timestamp: "2026-04-23T00:00:03.500Z",
+      type: "event_msg",
+      payload: {
+        type: "collab_agent_spawn_end",
+        call_id: "spawn_001",
+        new_agent_nickname: "Epicurus",
+        new_agent_role: "default",
+        prompt: "Summarize the spec",
+      },
+    },
+    {
+      timestamp: "2026-04-23T00:00:03.750Z",
+      type: "event_msg",
+      payload: {
+        type: "collab_close_end",
+        call_id: "close_001",
+        receiver_agent_nickname: "Epicurus",
+        receiver_agent_role: "default",
+        status: {
+          completed: "done",
+        },
+      },
+    },
+    {
+      timestamp: "2026-04-23T00:00:04.000Z",
+      type: "event_msg",
+      payload: {
+        type: "turn_aborted",
+        reason: "interrupted",
+      },
+    },
+    {
+      timestamp: "2026-04-23T00:00:04.250Z",
+      type: "event_msg",
+      payload: {
+        type: "task_complete",
+        turn_id: "turn_001",
+        last_agent_message: "done",
+      },
+    },
   ];
 }
 
-test("--mode events renders extended exec and patch events into markdown", async () => {
+function extractEventRef(markdown: string, heading: string): string {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const match = markdown.match(new RegExp(`${escaped}[\\s\\S]*?- event_ref：\`(E\\d{6})\``));
+  assert.ok(match, `expected event_ref for ${heading}`);
+  return match[1] || "";
+}
+
+test("--mode events renders the meaningful workflow events into markdown", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-chat-cli-events-"));
   const inputPath = path.join(tmpDir, "rollout-test.jsonl");
   const outputPath = path.join(tmpDir, "events.md");
@@ -70,15 +190,29 @@ test("--mode events renders extended exec and patch events into markdown", async
   ]);
 
   const markdown = fs.readFileSync(outputPath, "utf8");
+  assert.match(markdown, /### 网页搜索/);
+  assert.match(markdown, /codex timeline event lookup/);
+  assert.match(markdown, /### 任务开始/);
   assert.match(markdown, /### 命令执行：`printf hi`/);
+  assert.match(markdown, /- action：`read`/);
   assert.match(markdown, /- cwd：`\/tmp\/project`/);
   assert.match(markdown, /- exit_code：`0`/);
   assert.match(markdown, /- duration：`1\.250s`/);
+  assert.match(markdown, /- event_ref：`E\d{6}`/);
   assert.match(markdown, /~~~text\nhi\n```js\nconsole\.log\(1\);\n```\n~~~/);
   assert.match(markdown, /### 补丁应用：`call_patch`/);
   assert.match(markdown, /- success：`true`/);
   assert.match(markdown, /#### add `\/tmp\/project\/demo\.txt`/);
   assert.match(markdown, /~~~diff\n--- \/dev\/null\n\+\+\+ \/tmp\/project\/demo\.txt\n\+hello\n\+world\n~~~/);
+  assert.match(markdown, /### 上下文压缩/);
+  assert.match(markdown, /### 线程回滚/);
+  assert.match(markdown, /### 网页搜索完成/);
+  assert.match(markdown, /### MCP 工具调用完成/);
+  assert.match(markdown, /### 协作代理启动完成/);
+  assert.match(markdown, /Epicurus/);
+  assert.match(markdown, /### 协作代理关闭完成/);
+  assert.match(markdown, /### 回合中断/);
+  assert.match(markdown, /### 任务完成/);
 });
 
 test("default markdown mode keeps extended exec and patch events collapsed", async () => {
@@ -94,4 +228,85 @@ test("default markdown mode keeps extended exec and patch events collapsed", asy
   assert.doesNotMatch(markdown, /### 命令执行：/);
   assert.doesNotMatch(markdown, /### 补丁应用：/);
   assert.doesNotMatch(markdown, /~~~text\nhi/);
+  assert.doesNotMatch(markdown, /### 网页搜索/);
+});
+
+test("--mode timeline keeps workflow events but hides command output and diff bodies", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-chat-cli-timeline-"));
+  const inputPath = path.join(tmpDir, "rollout-test.jsonl");
+  const outputPath = path.join(tmpDir, "timeline.md");
+
+  writeJsonl(inputPath, extendedEventRows());
+
+  await execFileAsync(process.execPath, [
+    cliPath,
+    "--input",
+    inputPath,
+    "--mode",
+    "timeline",
+    "--output",
+    outputPath,
+  ]);
+
+  const markdown = fs.readFileSync(outputPath, "utf8");
+  assert.match(markdown, /### 命令执行：`printf hi`/);
+  assert.match(markdown, /- event_ref：`E\d{6}`/);
+  assert.doesNotMatch(markdown, /#### output/);
+  assert.doesNotMatch(markdown, /console\.log\(1\)/);
+  assert.match(markdown, /#### add `\/tmp\/project\/demo\.txt`/);
+  assert.match(markdown, /- diff_stat：`\+2 \/ -0`/);
+  assert.doesNotMatch(markdown, /~~~diff/);
+  assert.match(markdown, /### 上下文压缩/);
+  assert.match(markdown, /### 协作代理关闭完成/);
+});
+
+test("timeline event_ref can be used to recover hidden exec output and diff details", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-chat-cli-event-ref-"));
+  const inputPath = path.join(tmpDir, "rollout-test.jsonl");
+  const timelinePath = path.join(tmpDir, "timeline.md");
+
+  writeJsonl(inputPath, extendedEventRows());
+
+  await execFileAsync(process.execPath, [
+    cliPath,
+    "--input",
+    inputPath,
+    "--mode",
+    "timeline",
+    "--output",
+    timelinePath,
+  ]);
+
+  const markdown = fs.readFileSync(timelinePath, "utf8");
+  const execRef = extractEventRef(markdown, "### 命令执行：`printf hi`");
+  const patchRef = extractEventRef(markdown, "### 补丁应用：`call_patch`");
+
+  const scriptPath = path.join(
+    process.cwd(),
+    "skills",
+    "cce-event-ref-lookup",
+    "scripts",
+    "reveal-event-ref.mjs",
+  );
+
+  const execReveal = await execFileAsync(process.execPath, [
+    scriptPath,
+    "--markdown",
+    timelinePath,
+    "--event-ref",
+    execRef,
+  ]);
+  assert.match(execReveal.stdout, /### 命令执行：`printf hi`/);
+  assert.match(execReveal.stdout, /console\.log\(1\)/);
+
+  const patchReveal = await execFileAsync(process.execPath, [
+    scriptPath,
+    "--markdown",
+    timelinePath,
+    "--event-ref",
+    patchRef,
+  ]);
+  assert.match(patchReveal.stdout, /### 补丁应用：`call_patch`/);
+  assert.match(patchReveal.stdout, /\+hello/);
+  assert.match(patchReveal.stdout, /\+world/);
 });

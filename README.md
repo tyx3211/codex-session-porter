@@ -11,7 +11,7 @@ Codex Session Porter 是一个面向 OpenAI Codex CLI / Codex VS Code 会话历�
 ### 特性
 
 - 与 `codex resume` 接近的会话发现逻辑：优先读取 Codex `state_*.sqlite`，并使用 `session_index.jsonl` 回退补全线程名。
-- 支持 `default` 和 `events` 两种 Markdown 模式；`events` 会展开 Codex VS Code 新事件中的命令执行结果和 patch diff。
+- 支持 `default`、`timeline` 和 `events` 三种 Markdown 模式；`timeline` 会保留完整工作流事件但折叠命令正文输出与详细 diff，`events` 会展开完整事件细节。
 - TUI 支持多选会话、按 `Updated` / `Created` 排序、显示 `Created`、`Updated`、`Branch`、`Project`、`Conversation` 列。
 - TUI 导出时可选择按线程名作为文件名前缀，线程名前缀最多保留 50 个 UTF-8 字节。
 - JSONL 导出支持过滤工具输出和环境上下文。
@@ -54,7 +54,7 @@ node dist/cli.js --help
 cce --list
 
 # 打开交互式会话选择器
-cce tui --mode events --output ./exports
+cce tui --mode timeline --output ./exports
 
 # 按原始 session 文件名显示列表
 cce --list --display file
@@ -67,6 +67,9 @@ cce --pick 1,3 --output ./exports
 
 # 导出全部会话
 cce --all --output ./exports
+
+# 导出中等详细时间线，保留 workflow 但折叠命令输出正文和详细 diff
+cce --latest --mode timeline --output ./latest-timeline.md
 
 # 展开 Codex VS Code 新事件，包含命令输出和 patch diff
 cce --latest --mode events --output ./latest-events.md
@@ -90,7 +93,7 @@ cce --latest \
 - `--input <file>`：直接指定一个或多个 `.jsonl` 文件
 - `--list`：打印会话索引列表
 - `--format <markdown|jsonl>`：导出格式，默认 `markdown`
-- `--mode <default|events>`：Markdown 渲染模式，默认 `default`
+- `--mode <default|timeline|events>`：Markdown 渲染模式，默认 `default`
 - `--display <thread|file>`：会话列表显示模式，默认 `thread`
 - `--output <path>`：输出路径；单会话可为文件，多会话建议为目录
 - `--include-agent-reasoning`：Markdown 中包含 reasoning（推理内容）
@@ -104,20 +107,39 @@ cce --latest \
 - `↑` / `↓`：移动光标
 - `Space`：选中或取消选中当前会话
 - `a`：全选或反选
-- `m`：切换 `default` / `events` Markdown 模式
+- `m`：切换 `default` / `timeline` / `events` Markdown 模式
 - `d`：切换线程名 / 文件名显示
 - `s` 或 `Tab`：切换 `Updated` / `Created` 排序
 - `Enter`：确认选择
 - `q` 或 `Esc`：退出
 
-### Markdown events 模式
+### Markdown 模式
 
-`--mode events` 会把 Codex VS Code 记录的新事件展开成 Markdown，包括：
+- `default`：只导出用户/助手主对话，以及显式要求保留的 reasoning / tool call 内容
+- `timeline`：导出完整工作流事件时间线，但折叠命令正文输出，并把每个文件的 diff 改成 `+/-` 行数统计
+- `events`：导出完整工作流事件时间线，并展开命令正文输出与完整 patch diff
 
-- 命令执行目录、退出码、耗时和输出
-- patch 变更涉及的文件和 diff 片段
+`timeline` 和 `events` 会把 Codex / Codex VS Code 记录的新事件展开成 Markdown，包括：
 
-事件块使用 `~~~` 作为 Markdown 代码围栏，避免命令输出里出现反引号代码块时提前闭合外层代码块。
+- 命令执行目录、退出码、耗时和动作类型
+- patch 变更涉及的文件，以及 `timeline` 下的 diff 统计或 `events` 下的完整 diff
+- 网页搜索、任务开始/结束、上下文压缩、线程回滚、协作代理生命周期、MCP 工具调用等工作流事件
+
+这两种模式下，每个事件块都会带一个稳定的 `event_ref`。事件块仍使用 `~~~` 作为 Markdown 代码围栏，避免命令输出里出现反引号代码块时提前闭合外层代码块。
+
+### Timeline 回查 Skill
+
+仓库内置了一个 repo-local skill：`skills/cce-event-ref-lookup`。
+
+当我们查看 `--mode timeline` 导出的 Markdown 时，如果想恢复某个事件被折叠掉的命令输出或完整 diff，可以直接用：
+
+```bash
+node skills/cce-event-ref-lookup/scripts/reveal-event-ref.mjs \
+  --markdown ./latest-timeline.md \
+  --event-ref E000123
+```
+
+脚本会根据 Markdown 头部记录的 `源文件` 路径，精确回到原始 JSONL 的那一行记录，并输出完整事件内容。对命令事件会恢复完整输出；对补丁事件会恢复完整 diff。
 
 ### 致谢
 
@@ -132,7 +154,7 @@ The goal is not to reproduce the full rich UI from Codex. Instead, it turns usef
 ### Features
 
 - Session discovery close to `codex resume`: reads Codex `state_*.sqlite` first and falls back to `session_index.jsonl` for thread names.
-- Two Markdown modes: `default` and `events`. The `events` mode expands Codex VS Code command results and patch diffs.
+- Three Markdown modes: `default`, `timeline`, and `events`. `timeline` keeps the workflow event stream but hides command body output and detailed diffs, while `events` expands the full event details.
 - TUI picker with multi-select, `Updated` / `Created` sorting, and `Created`, `Updated`, `Branch`, `Project`, `Conversation` columns.
 - Optional thread-name file prefix in TUI exports, capped at 50 UTF-8 bytes.
 - JSONL export with switches for tool outputs and environment context.
@@ -175,7 +197,7 @@ node dist/cli.js --help
 cce --list
 
 # Open the interactive picker
-cce tui --mode events --output ./exports
+cce tui --mode timeline --output ./exports
 
 # Show raw session file names
 cce --list --display file
@@ -188,6 +210,9 @@ cce --pick 1,3 --output ./exports
 
 # Export all sessions
 cce --all --output ./exports
+
+# Export a medium-detail workflow timeline
+cce --latest --mode timeline --output ./latest-timeline.md
 
 # Expand Codex VS Code event records, including command output and patch diffs
 cce --latest --mode events --output ./latest-events.md
@@ -211,7 +236,7 @@ cce --latest \
 - `--input <file>`: pass one or more `.jsonl` files directly
 - `--list`: print session index list
 - `--format <markdown|jsonl>`: export format, defaults to `markdown`
-- `--mode <default|events>`: Markdown rendering mode, defaults to `default`
+- `--mode <default|timeline|events>`: Markdown rendering mode, defaults to `default`
 - `--display <thread|file>`: list display mode, defaults to `thread`
 - `--output <path>`: output path; a single session can use a file path, multiple sessions should use a directory
 - `--include-agent-reasoning`: include reasoning in Markdown

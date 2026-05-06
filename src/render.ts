@@ -3,10 +3,28 @@ import readline from "node:readline";
 import { once } from "node:events";
 import { isRecord, parseJsonRecord, type JsonRecord } from "./guards.js";
 import type { CliOptions, SessionMeta } from "./types.js";
-import { looksLikeEnvironmentContext, stringFromUnknown } from "./utils.js";
+import {
+  compactSingleLine,
+  looksLikeEnvironmentContext,
+  stringFromUnknown,
+  truncate,
+} from "./utils.js";
 
 interface Writer {
   write(text: string): void;
+}
+
+type WorkflowDetailLevel = "summary" | "full";
+
+interface EventRenderContext {
+  ts: string | null;
+  eventRef: string;
+  detail: WorkflowDetailLevel;
+}
+
+interface DiffStat {
+  added: number;
+  removed: number;
 }
 
 export interface RenderOptions {
@@ -23,7 +41,6 @@ function extractTextFromResponseMessageContent(content: unknown): string {
   const parts: string[] = [];
   for (const item of content) {
     if (!item || typeof item !== "object") continue;
-
     if (!isRecord(item)) continue;
 
     const record = item;
@@ -49,12 +66,10 @@ function writeTurn(writer: Writer, who: string, ts: string | null, message: unkn
 
 function formatDuration(duration: unknown): string {
   if (!duration || typeof duration !== "object") return "";
-
   if (!isRecord(duration)) return "";
 
-  const record = duration;
-  const secs = Number(record.secs || 0);
-  const nanos = Number(record.nanos || 0);
+  const secs = Number(duration.secs || 0);
+  const nanos = Number(duration.nanos || 0);
   const total = secs + nanos / 1000000000;
   if (!Number.isFinite(total) || total < 0) return "";
 
@@ -65,11 +80,9 @@ function commandLabel(payload: JsonRecord): string {
   const parsed = Array.isArray(payload.parsed_cmd) ? payload.parsed_cmd : [];
   for (const item of parsed) {
     if (!item || typeof item !== "object") continue;
-
     if (!isRecord(item)) continue;
 
-    const record = item;
-    if (typeof record.cmd === "string" && record.cmd.trim()) return record.cmd.trim();
+    if (typeof item.cmd === "string" && item.cmd.trim()) return item.cmd.trim();
   }
 
   const command: unknown[] = Array.isArray(payload.command) ? payload.command : [];
@@ -79,6 +92,18 @@ function commandLabel(payload: JsonRecord): string {
   }
 
   return typeof payload.call_id === "string" && payload.call_id ? payload.call_id : "unknown";
+}
+
+function commandActionKind(payload: JsonRecord): string {
+  const parsed = Array.isArray(payload.parsed_cmd) ? payload.parsed_cmd : [];
+  for (const item of parsed) {
+    if (!item || typeof item !== "object") continue;
+    if (!isRecord(item)) continue;
+
+    if (typeof item.type === "string" && item.type.trim()) return item.type.trim();
+  }
+
+  return "";
 }
 
 function fenceForContent(text: string): string {
@@ -95,45 +120,78 @@ function fencedBlock(lang: string, content: unknown): string {
   return `${fence}${lang}\n${text}\n${fence}\n\n`;
 }
 
-function writeExecCommandEnd(writer: Writer, ts: string | null, payload: JsonRecord): void {
-  const label = commandLabel(payload);
-  writer.write(`### 命令执行：\`${label}\`${ts ? `（${ts}）` : ""}\n\n`);
+/**
+ * 每个事件块都写一个稳定的 event_ref（事件引用），这样较短的时间线导出可以不内嵌
+ * 大段输出或 diff 正文，但后续仍能确定性回查到原始 JSONL 里的那一行记录。
+ */
+function writeEventHeader(writer: Writer, title: string, context: EventRenderContext): void {
+  writer.write(`### ${title}${context.ts ? `（${context.ts}）` : ""}\n\n`);
+  writer.write(`- event_ref：\`${context.eventRef}\`\n`);
+}
 
-  if (typeof payload.cwd === "string" && payload.cwd) {
-    writer.write(`- cwd：\`${payload.cwd}\`\n`);
+function writeCodeMetadataLine(writer: Writer, label: string, value: string): void {
+  if (!value) return;
+  writer.write(`- ${label}：\`${value}\`\n`);
+}
+
+function writeTextMetadataLine(writer: Writer, label: string, value: string): void {
+  if (!value) return;
+  writer.write(`- ${label}：${value}\n`);
+}
+
+function lineCountFromContent(content: string): number {
+  const normalized = content.replace(/\n$/u, "");
+  if (!normalized) return 0;
+
+  return normalized.split("\n").length;
+}
+
+/**
+ * diff 统计只服务于 timeline 模式，因此这里优先做“稳定且可解释”的统计：
+ * - add/delete 直接按内容行数统计；
+ * - update 优先解析 unified diff；
+ * - 若只有退化文本，则尽量识别 + / - 行；
+ * - 实在无法识别时返回 0/0，而不是猜测错误结果。
+ */
+function fileChangeStat(change: unknown): DiffStat {
+  const record = isRecord(change) ? change : {};
+  const type = typeof record.type === "string" ? record.type : "unknown";
+  const content = typeof record.content === "string" ? record.content : "";
+
+  if (type === "add") {
+    return { added: lineCountFromContent(content), removed: 0 };
   }
 
-  if (Object.prototype.hasOwnProperty.call(payload, "exit_code")) {
-    writer.write(`- exit_code：\`${String(payload.exit_code)}\`\n`);
+  if (type === "delete") {
+    return { added: 0, removed: lineCountFromContent(content) };
   }
 
-  if (typeof payload.status === "string" && payload.status) {
-    writer.write(`- status：\`${payload.status}\`\n`);
+  const patchText =
+    typeof record.unified_diff === "string" && record.unified_diff
+      ? record.unified_diff
+      : typeof record.diff === "string" && record.diff
+        ? record.diff
+        : content;
+
+  let added = 0;
+  let removed = 0;
+  for (const line of patchText.split("\n")) {
+    if (!line) continue;
+    if (line.startsWith("+++")) continue;
+    if (line.startsWith("---")) continue;
+    if (line.startsWith("@@")) continue;
+
+    if (line.startsWith("+")) {
+      added += 1;
+      continue;
+    }
+
+    if (line.startsWith("-")) {
+      removed += 1;
+    }
   }
 
-  const duration = formatDuration(payload.duration);
-  if (duration) writer.write(`- duration：\`${duration}\`\n`);
-  writer.write("\n");
-
-  if (Array.isArray(payload.command) && payload.command.length > 0) {
-    writer.write("#### command\n\n");
-    writer.write(fencedBlock("json", JSON.stringify(payload.command, null, 2)));
-  }
-
-  if (Array.isArray(payload.parsed_cmd) && payload.parsed_cmd.length > 0) {
-    writer.write("#### parsed_cmd\n\n");
-    writer.write(fencedBlock("json", JSON.stringify(payload.parsed_cmd, null, 2)));
-  }
-
-  const output =
-    typeof payload.aggregated_output === "string" && payload.aggregated_output
-      ? payload.aggregated_output
-      : [payload.stdout, payload.stderr].filter((value) => typeof value === "string" && value).join("\n");
-
-  if (output) {
-    writer.write("#### output\n\n");
-    writer.write(fencedBlock("text", output));
-  }
+  return { added, removed };
 }
 
 function fileChangeDiff(filePath: string, change: unknown): string {
@@ -166,24 +224,92 @@ function fileChangeDiff(filePath: string, change: unknown): string {
   return JSON.stringify(record, null, 2);
 }
 
-function writePatchApplyEnd(writer: Writer, ts: string | null, payload: JsonRecord): void {
+function previewValue(value: unknown, maxLen = 140): string {
+  if (typeof value === "string") return truncate(compactSingleLine(value), maxLen);
+
+  if (value === null || value === undefined) return "";
+
+  try {
+    return truncate(compactSingleLine(JSON.stringify(value)), maxLen);
+  } catch {
+    return truncate(compactSingleLine(stringFromUnknown(value)), maxLen);
+  }
+}
+
+function eventDetailLevelForMode(mode: CliOptions["mode"]): WorkflowDetailLevel | null {
+  if (mode === "events") return "full";
+  if (mode === "timeline") return "summary";
+
+  return null;
+}
+
+function eventRefFromLineNumber(lineNumber: number): string {
+  return `E${String(lineNumber).padStart(6, "0")}`;
+}
+
+function writeExecCommandEvent(writer: Writer, context: EventRenderContext, payload: JsonRecord): void {
+  const label = commandLabel(payload);
+  writeEventHeader(writer, `命令执行：\`${label}\``, context);
+
+  const action = commandActionKind(payload);
+  if (action) writeCodeMetadataLine(writer, "action", action);
+  if (typeof payload.cwd === "string" && payload.cwd) writeCodeMetadataLine(writer, "cwd", payload.cwd);
+
+  if (Object.prototype.hasOwnProperty.call(payload, "exit_code")) {
+    writeCodeMetadataLine(writer, "exit_code", String(payload.exit_code));
+  }
+
+  if (typeof payload.status === "string" && payload.status) {
+    writeCodeMetadataLine(writer, "status", payload.status);
+  }
+
+  const duration = formatDuration(payload.duration);
+  if (duration) writeCodeMetadataLine(writer, "duration", duration);
+  writer.write("\n");
+
+  if (context.detail === "summary") return;
+
+  if (Array.isArray(payload.command) && payload.command.length > 0) {
+    writer.write("#### command\n\n");
+    writer.write(fencedBlock("json", JSON.stringify(payload.command, null, 2)));
+  }
+
+  if (Array.isArray(payload.parsed_cmd) && payload.parsed_cmd.length > 0) {
+    writer.write("#### parsed_cmd\n\n");
+    writer.write(fencedBlock("json", JSON.stringify(payload.parsed_cmd, null, 2)));
+  }
+
+  const output =
+    typeof payload.aggregated_output === "string" && payload.aggregated_output
+      ? payload.aggregated_output
+      : [payload.stdout, payload.stderr].filter((value) => typeof value === "string" && value).join("\n");
+
+  if (output) {
+    writer.write("#### output\n\n");
+    writer.write(fencedBlock("text", output));
+  }
+}
+
+function writePatchApplyEvent(writer: Writer, context: EventRenderContext, payload: JsonRecord): void {
   const callId = typeof payload.call_id === "string" && payload.call_id ? payload.call_id : "unknown";
-  writer.write(`### 补丁应用：\`${callId}\`${ts ? `（${ts}）` : ""}\n\n`);
+  writeEventHeader(writer, `补丁应用：\`${callId}\``, context);
 
   if (Object.prototype.hasOwnProperty.call(payload, "success")) {
-    writer.write(`- success：\`${String(payload.success)}\`\n`);
+    writeCodeMetadataLine(writer, "success", String(payload.success));
   }
 
   writer.write("\n");
 
-  if (typeof payload.stdout === "string" && payload.stdout.trim()) {
-    writer.write("#### stdout\n\n");
-    writer.write(fencedBlock("text", payload.stdout));
-  }
+  if (context.detail === "full") {
+    if (typeof payload.stdout === "string" && payload.stdout.trim()) {
+      writer.write("#### stdout\n\n");
+      writer.write(fencedBlock("text", payload.stdout));
+    }
 
-  if (typeof payload.stderr === "string" && payload.stderr.trim()) {
-    writer.write("#### stderr\n\n");
-    writer.write(fencedBlock("text", payload.stderr));
+    if (typeof payload.stderr === "string" && payload.stderr.trim()) {
+      writer.write("#### stderr\n\n");
+      writer.write(fencedBlock("text", payload.stderr));
+    }
   }
 
   const changes = payload.changes && typeof payload.changes === "object" ? payload.changes : {};
@@ -191,7 +317,239 @@ function writePatchApplyEnd(writer: Writer, ts: string | null, payload: JsonReco
     const record = isRecord(change) ? change : {};
     const type = typeof record.type === "string" ? record.type : "unknown";
     writer.write(`#### ${type} \`${filePath}\`\n\n`);
-    writer.write(fencedBlock("diff", fileChangeDiff(filePath, change)));
+
+    if (context.detail === "full") {
+      writer.write(fencedBlock("diff", fileChangeDiff(filePath, change)));
+      continue;
+    }
+
+    const stat = fileChangeStat(change);
+    writeCodeMetadataLine(writer, "diff_stat", `+${stat.added} / -${stat.removed}`);
+    writer.write("\n");
+  }
+}
+
+function writeSimpleEvent(
+  writer: Writer,
+  context: EventRenderContext,
+  title: string,
+  metadata: Array<{ label: string; value: string; kind?: "code" | "text" }>,
+): void {
+  writeEventHeader(writer, title, context);
+  for (const item of metadata) {
+    if (!item.value) continue;
+    if (item.kind === "text") {
+      writeTextMetadataLine(writer, item.label, item.value);
+      continue;
+    }
+
+    writeCodeMetadataLine(writer, item.label, item.value);
+  }
+  writer.write("\n");
+}
+
+function writeErrorEvent(writer: Writer, context: EventRenderContext, payload: JsonRecord): void {
+  writeEventHeader(writer, "错误事件", context);
+  writeCodeMetadataLine(writer, "codex_error_info", stringFromUnknown(payload.codex_error_info));
+  writer.write("\n");
+
+  const message = stringFromUnknown(payload.message);
+  if (!message) return;
+
+  if (context.detail === "full") {
+    writer.write("#### message\n\n");
+    writer.write(fencedBlock("text", message));
+    return;
+  }
+
+  writeTextMetadataLine(writer, "message", previewValue(message));
+  writer.write("\n");
+}
+
+function writeMcpToolCallEnd(writer: Writer, context: EventRenderContext, payload: JsonRecord): void {
+  const invocation = isRecord(payload.invocation) ? payload.invocation : {};
+  const result = isRecord(payload.result) ? payload.result : {};
+
+  writeSimpleEvent(writer, context, "MCP 工具调用完成", [
+    { label: "call_id", value: stringFromUnknown(payload.call_id) },
+    { label: "server", value: stringFromUnknown(invocation.server) },
+    { label: "tool", value: stringFromUnknown(invocation.tool) },
+    { label: "duration", value: formatDuration(payload.duration) },
+    { label: "result", value: previewValue(result.Err || result.Ok || result, 180), kind: "text" },
+  ]);
+}
+
+function writeCollabEvent(
+  writer: Writer,
+  context: EventRenderContext,
+  title: string,
+  payload: JsonRecord,
+  nameKey: string,
+  roleKey: string,
+): void {
+  writeSimpleEvent(writer, context, title, [
+    { label: "call_id", value: stringFromUnknown(payload.call_id) },
+    { label: "agent", value: stringFromUnknown(payload[nameKey]) },
+    { label: "role", value: stringFromUnknown(payload[roleKey]) },
+    { label: "status", value: previewValue(payload.status), kind: "text" },
+    { label: "prompt", value: previewValue(payload.prompt, 160), kind: "text" },
+  ]);
+}
+
+function writeWorkflowEventFromEventMsg(
+  writer: Writer,
+  context: EventRenderContext,
+  payload: JsonRecord,
+): boolean {
+  const type = stringFromUnknown(payload.type);
+
+  switch (type) {
+    case "exec_command_end":
+      writeExecCommandEvent(writer, context, payload);
+      return true;
+    case "patch_apply_end":
+      writePatchApplyEvent(writer, context, payload);
+      return true;
+    case "task_started":
+      writeSimpleEvent(writer, context, "任务开始", [
+        { label: "turn_id", value: stringFromUnknown(payload.turn_id) },
+        { label: "context_window", value: stringFromUnknown(payload.model_context_window) },
+        { label: "collaboration_mode", value: stringFromUnknown(payload.collaboration_mode_kind) },
+      ]);
+      return true;
+    case "task_complete":
+      writeSimpleEvent(writer, context, "任务完成", [
+        { label: "turn_id", value: stringFromUnknown(payload.turn_id) },
+        { label: "summary", value: previewValue(payload.last_agent_message), kind: "text" },
+      ]);
+      return true;
+    case "turn_aborted":
+      writeSimpleEvent(writer, context, "回合中断", [
+        { label: "reason", value: stringFromUnknown(payload.reason) },
+      ]);
+      return true;
+    case "context_compacted":
+      writeSimpleEvent(writer, context, "上下文压缩", [
+        { label: "effect", value: "后续回合可能基于压缩摘要继续工作", kind: "text" },
+      ]);
+      return true;
+    case "thread_rolled_back":
+      writeSimpleEvent(writer, context, "线程回滚", [
+        { label: "num_turns", value: stringFromUnknown(payload.num_turns) },
+      ]);
+      return true;
+    case "web_search_end":
+      writeSimpleEvent(writer, context, "网页搜索完成", [
+        { label: "call_id", value: stringFromUnknown(payload.call_id) },
+        { label: "query", value: previewValue(payload.query), kind: "text" },
+        { label: "action", value: stringFromUnknown(isRecord(payload.action) ? payload.action.type : "") },
+      ]);
+      return true;
+    case "mcp_tool_call_end":
+      writeMcpToolCallEnd(writer, context, payload);
+      return true;
+    case "view_image_tool_call":
+      writeSimpleEvent(writer, context, "查看图片", [
+        { label: "call_id", value: stringFromUnknown(payload.call_id) },
+        { label: "path", value: stringFromUnknown(payload.path) },
+      ]);
+      return true;
+    case "collab_agent_spawn_end":
+      writeCollabEvent(writer, context, "协作代理启动完成", payload, "new_agent_nickname", "new_agent_role");
+      return true;
+    case "collab_close_end":
+      writeCollabEvent(writer, context, "协作代理关闭完成", payload, "receiver_agent_nickname", "receiver_agent_role");
+      return true;
+    case "collab_waiting_end":
+      writeCollabEvent(writer, context, "协作代理等待完成", payload, "receiver_agent_nickname", "receiver_agent_role");
+      return true;
+    case "collab_agent_interaction_end":
+      writeCollabEvent(writer, context, "协作代理交互完成", payload, "receiver_agent_nickname", "receiver_agent_role");
+      return true;
+    case "collab_resume_end":
+      writeCollabEvent(writer, context, "协作代理恢复完成", payload, "receiver_agent_nickname", "receiver_agent_role");
+      return true;
+    case "item_completed": {
+      const item = isRecord(payload.item) ? payload.item : {};
+      writeSimpleEvent(writer, context, "计划项完成", [
+        { label: "thread_id", value: stringFromUnknown(payload.thread_id) },
+        { label: "turn_id", value: stringFromUnknown(payload.turn_id) },
+        { label: "item_type", value: stringFromUnknown(item.type) },
+        { label: "summary", value: previewValue(item.text, 180), kind: "text" },
+      ]);
+      return true;
+    }
+    case "thread_name_updated":
+      writeSimpleEvent(writer, context, "线程名更新", [
+        { label: "thread_name", value: stringFromUnknown(payload.thread_name), kind: "text" },
+      ]);
+      return true;
+    case "error":
+      writeErrorEvent(writer, context, payload);
+      return true;
+    default:
+      return false;
+  }
+}
+
+function writeWorkflowEventFromResponseItem(
+  writer: Writer,
+  context: EventRenderContext,
+  payload: JsonRecord,
+): boolean {
+  const type = stringFromUnknown(payload.type);
+
+  switch (type) {
+    case "web_search_call": {
+      const action = isRecord(payload.action) ? payload.action : {};
+      writeSimpleEvent(writer, context, "网页搜索", [
+        { label: "status", value: stringFromUnknown(payload.status) },
+        { label: "action", value: stringFromUnknown(action.type) },
+        { label: "query", value: previewValue(action.query, 180), kind: "text" },
+      ]);
+      return true;
+    }
+    case "tool_search_call": {
+      const argumentsRecord = isRecord(payload.arguments) ? payload.arguments : {};
+      writeSimpleEvent(writer, context, "工具搜索", [
+        { label: "call_id", value: stringFromUnknown(payload.call_id) },
+        { label: "status", value: stringFromUnknown(payload.status) },
+        { label: "execution", value: stringFromUnknown(payload.execution) },
+        { label: "query", value: previewValue(argumentsRecord.query, 180), kind: "text" },
+        { label: "limit", value: stringFromUnknown(argumentsRecord.limit) },
+      ]);
+      return true;
+    }
+    case "tool_search_output":
+      writeSimpleEvent(writer, context, "工具搜索结果", [
+        { label: "call_id", value: stringFromUnknown(payload.call_id) },
+        { label: "status", value: stringFromUnknown(payload.status) },
+        { label: "execution", value: stringFromUnknown(payload.execution) },
+        { label: "tool_count", value: String(Array.isArray(payload.tools) ? payload.tools.length : 0) },
+      ]);
+      return true;
+    case "custom_tool_call":
+      writeSimpleEvent(writer, context, `自定义工具调用：\`${stringFromUnknown(payload.name) || "unknown"}\``, [
+        { label: "call_id", value: stringFromUnknown(payload.call_id) },
+        { label: "status", value: stringFromUnknown(payload.status) },
+        { label: "input_preview", value: previewValue(payload.input, 180), kind: "text" },
+      ]);
+      return true;
+    case "custom_tool_call_output": {
+      const outputText = stringFromUnknown(payload.output);
+      const parsedOutput = parseJsonRecord(outputText);
+      const metadata = parsedOutput && isRecord(parsedOutput.metadata) ? parsedOutput.metadata : {};
+
+      writeSimpleEvent(writer, context, "自定义工具输出", [
+        { label: "call_id", value: stringFromUnknown(payload.call_id) },
+        { label: "exit_code", value: stringFromUnknown(metadata.exit_code) },
+        { label: "duration_seconds", value: stringFromUnknown(metadata.duration_seconds) },
+        { label: "output_preview", value: previewValue(parsedOutput?.output || outputText, 180), kind: "text" },
+      ]);
+      return true;
+    }
+    default:
+      return false;
   }
 }
 
@@ -268,12 +626,17 @@ export async function writeMarkdownFromJsonl(
   const messageSources = await detectMessageSources(sourcePath);
   const preferEventUserMessages = messageSources.hasEventUserMessage;
   const preferEventAgentMessages = messageSources.hasEventAgentMessage;
+  const workflowDetail = eventDetailLevelForMode(options.mode);
 
   const input = fs.createReadStream(sourcePath, { encoding: "utf8" });
   const rl = readline.createInterface({ input, crlfDelay: Infinity });
 
   try {
+    let lineNumber = 0;
+
     rl.on("line", (line) => {
+      lineNumber += 1;
+
       const trimmed = String(line || "").trim();
       if (!trimmed) return;
 
@@ -281,10 +644,16 @@ export async function writeMarkdownFromJsonl(
       if (!obj) return;
 
       const ts = typeof obj.timestamp === "string" ? obj.timestamp : null;
+      const eventContext: EventRenderContext = {
+        ts,
+        eventRef: eventRefFromLineNumber(lineNumber),
+        detail: workflowDetail || "summary",
+      };
 
       if (obj.type === "event_msg" && hasPayloadRecord(obj)) {
         const payload = obj.payload;
         const type = payload.type;
+
         if (preferEventUserMessages && type === "user_message") {
           writeTurn(writer, "用户", ts, payload.message, payload.images);
           return;
@@ -300,13 +669,15 @@ export async function writeMarkdownFromJsonl(
           return;
         }
 
-        if (options.mode === "events" && type === "exec_command_end") {
-          writeExecCommandEnd(writer, ts, payload);
+        if (workflowDetail && writeWorkflowEventFromEventMsg(writer, eventContext, payload)) {
           return;
         }
+      }
 
-        if (options.mode === "events" && type === "patch_apply_end") {
-          writePatchApplyEnd(writer, ts, payload);
+      if (obj.type === "response_item" && hasPayloadRecord(obj)) {
+        const payload = obj.payload;
+
+        if (workflowDetail && writeWorkflowEventFromResponseItem(writer, eventContext, payload)) {
           return;
         }
       }
@@ -371,10 +742,13 @@ export async function renderMarkdownFromJsonl(
   return chunks.join("");
 }
 
-export async function readJsonlForSync(filePath: string, options: {
-  includeToolOutputs: boolean;
-  includeEnvironmentContext: boolean;
-}): Promise<string> {
+export async function readJsonlForSync(
+  filePath: string,
+  options: {
+    includeToolOutputs: boolean;
+    includeEnvironmentContext: boolean;
+  },
+): Promise<string> {
   if (options.includeToolOutputs && options.includeEnvironmentContext) {
     return await fs.promises.readFile(filePath, "utf8");
   }
