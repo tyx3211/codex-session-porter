@@ -126,6 +126,7 @@ cce handoff --input ./rollout.jsonl --output ./handoff
 每个会话会生成一个独立目录，包含：
 
 - `README.md`：agent 首读说明，记录源 JSONL、线程名、项目目录、阅读顺序和回查方法
+- `cce-provider-handoff.SKILL.md`：接续用 skill 内容副本；即使目标 agent 没安装本仓库 skill，也可以先读这个文件
 - `context-timeline.md`：`--source context --mode timeline`，是 provider 切换后的主接续材料
 - `history-timeline.md`：`--source history --mode timeline`，是完整工作流索引，保留 `event_ref`
 - `history-events.md`：`--source history --mode events`，是完整命令输出和完整 diff 的审计材料
@@ -133,7 +134,14 @@ cce handoff --input ./rollout.jsonl --output ./handoff
 
 人工挑选会话时可以先用 `cce tui --mode timeline`；真正交给 agent 接续时，优先给它 `handoff` 接续包。
 
-仓库内置了接续用 repo-local skill：`skills/cce-provider-handoff`。它覆盖两种场景：用户已经导出 handoff 包时，指导 agent 按顺序阅读；agent 需要自主接续时，指导 agent 先用 `cce --list --display thread` 定位会话，再运行 `cce handoff`。
+仓库内置了接续用 repo-local skill：`skills/cce-provider-handoff`。它覆盖两种场景：用户已经导出 handoff 包时，指导 agent 按顺序阅读；agent 需要自主接续时，指导 agent 先用 `cce --list --display thread` 定位会话，再运行 `cce handoff`。`handoff` 包会同时带上 `cce-provider-handoff.SKILL.md`，方便直接交给未安装该 skill 的新 agent。
+
+推荐给新 agent 的第一条消息可以写成：
+
+```text
+请使用 cce-provider-handoff skill 接续；如果 skill 未安装，请先阅读接续包里的 cce-provider-handoff.SKILL.md 并遵守它。
+第一轮 turn 只恢复状态，不要改文件或实际执行任务。
+```
 
 ### TUI 快捷键
 
@@ -331,9 +339,16 @@ cce handoff --pick 1,3 --output ./handoff
 cce handoff --input ./rollout.jsonl --output ./handoff
 ```
 
-Each selected session gets its own directory with `README.md`, `context-timeline.md`, `history-timeline.md`, `history-events.md`, and `source.jsonl`. The intended reading order is `context-timeline.md -> history-timeline.md -> history-events.md`; use `event_ref` plus `source.jsonl` for precise lookup.
+Each selected session gets its own directory with `README.md`, `cce-provider-handoff.SKILL.md`, `context-timeline.md`, `history-timeline.md`, `history-events.md`, and `source.jsonl`. The intended reading order is `cce-provider-handoff.SKILL.md -> context-timeline.md -> history-timeline.md -> history-events.md`; use `event_ref` plus `source.jsonl` for precise lookup.
 
-The repository also ships `skills/cce-provider-handoff`, a repo-local skill for agents that either receive an existing handoff package or need to generate one themselves with `cce --list --display thread` and `cce handoff`.
+The repository also ships `skills/cce-provider-handoff`, a repo-local skill for agents that either receive an existing handoff package or need to generate one themselves with `cce --list --display thread` and `cce handoff`. Handoff packages include a copy as `cce-provider-handoff.SKILL.md`, so a fresh agent can read the package-local skill even if it has not installed the repo-local one.
+
+Suggested first prompt for the new agent:
+
+```text
+Please use the cce-provider-handoff skill to continue. If the skill is not installed, first read cce-provider-handoff.SKILL.md from the handoff package and follow it.
+The first turn should only restore task state; do not modify files or perform implementation work yet.
+```
 
 ### TUI Keys
 

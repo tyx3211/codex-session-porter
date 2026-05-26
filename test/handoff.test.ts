@@ -101,6 +101,7 @@ test("handoff command exports a self-contained package for direct input", async 
   const packageDir = path.join(outDir, packageDirs[0] || "");
   assert.deepEqual(listPackageFiles(packageDir), [
     "README.md",
+    "cce-provider-handoff.SKILL.md",
     "context-timeline.md",
     "history-events.md",
     "history-timeline.md",
@@ -116,6 +117,14 @@ test("handoff command exports a self-contained package for direct input", async 
   assert.match(readme, /context-timeline\.md -> history-timeline\.md -> history-events\.md/);
   assert.match(readme, /event_ref/);
   assert.match(readme, /source\.jsonl/);
+  assert.match(readme, /cce-provider-handoff\.SKILL\.md/);
+  assert.match(readme, /请使用 cce-provider-handoff skill/);
+  assert.match(readme, /第一轮 turn/);
+
+  const handoffSkill = fs.readFileSync(path.join(packageDir, "cce-provider-handoff.SKILL.md"), "utf8");
+  assert.match(handoffSkill, /name: cce-provider-handoff/);
+  assert.match(handoffSkill, /第一轮 turn 的目标是恢复状态/);
+  assert.match(handoffSkill, /不要写文件、改文件、提交、push/);
 
   const contextTimeline = fs.readFileSync(path.join(packageDir, "context-timeline.md"), "utf8");
   const historyTimeline = fs.readFileSync(path.join(packageDir, "history-timeline.md"), "utf8");
