@@ -318,7 +318,7 @@ function parseLegacyExecCommandEnvelope(outputText: string): LegacyExecCommandEn
   return {
     duration: wallTimeMatch?.[1] ? parseDurationSeconds(wallTimeMatch[1]) : null,
     exitCode: exitCodeMatch?.[1] || "",
-    output: outputMatch?.[1] || "",
+    output: outputMatch?.[1] || outputText,
   };
 }
 

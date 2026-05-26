@@ -13,7 +13,7 @@ Codex Session Porter 是一个面向 OpenAI Codex CLI / Codex VS Code 会话历�
 - 与 `codex resume` 接近的会话发现逻辑：优先读取 Codex `state_*.sqlite`，并使用 `session_index.jsonl` 回退补全线程名。
 - 支持 `history` / `context` 两层来源模式；`context` 会导出新版 rollout 的“模型可见历史候选视图”：先从最后一次带 `replacement_history` 的 compaction（上下文压缩）建立基线，再追加其后的消息、工具调用与工具结果，但不带 `AGENTS.md`、developer、`<environment_context>` 这类框架自动注入块；它既不是原始全量历史，也不是完整下一轮 API 请求。
 - 支持 `default`、`timeline` 和 `events` 三种 Markdown 模式；`timeline` 会保留完整工作流事件与 `action` 时间线，但折叠“命令执行”事件的正文输出与详细 diff，`events` 会展开完整事件细节。
-- 支持 `handoff` 接续包：把 `context-timeline.md`、`history-timeline.md`、`history-events.md` 和 `source.jsonl` 打包到同一个目录，方便切换 provider、账号或新 agent 对话后接续长任务。
+- 支持 `handoff` 接续包：把 `context-timeline.md`、`context-events.md`、`history-timeline.md`、`history-events.md` 和 `source.jsonl` 打包到同一个目录，方便切换 provider、账号或新 agent 对话后接续长任务。
 - TUI 支持多选会话、按 `Updated` / `Created` 排序、显示 `Created`、`Updated`、`Branch`、`Project`、`Conversation` 列。
 - TUI 导出时可选择按线程名作为文件名前缀，线程名前缀最多保留 50 个 UTF-8 字节。
 - JSONL 导出支持过滤工具输出和环境上下文。
@@ -127,7 +127,8 @@ cce handoff --input ./rollout.jsonl --output ./handoff
 
 - `README.md`：agent 首读说明，记录源 JSONL、线程名、项目目录、阅读顺序和回查方法
 - `cce-provider-handoff.SKILL.md`：接续用 skill 内容副本；即使目标 agent 没安装本仓库 skill，也可以先读这个文件
-- `context-timeline.md`：`--source context --mode timeline`，是 provider 切换后的主接续材料
+- `context-timeline.md`：`--source context --mode timeline`，用于先建立当前任务骨架
+- `context-events.md`：`--source context --mode events`，是当前真实模型可见上下文的详细版，会展开 context 内的命令输出、工具输出和 diff 细节
 - `history-timeline.md`：`--source history --mode timeline`，是完整工作流索引，保留 `event_ref`
 - `history-events.md`：`--source history --mode events`，是完整命令输出和完整 diff 的审计材料
 - `source.jsonl`：原始 JSONL 副本，保证接续包离开本机原路径后仍可回查
@@ -229,7 +230,7 @@ The goal is not to reproduce the full rich UI from Codex. Instead, it turns usef
 - Session discovery close to `codex resume`: reads Codex `state_*.sqlite` first and falls back to `session_index.jsonl` for thread names.
 - Two source layers: `history` and `context`. `context` exports a prompt-candidate, model-visible history view for newer rollout formats instead of the raw full history.
 - Three Markdown modes: `default`, `timeline`, and `events`. `timeline` keeps the workflow event stream and `action` timeline, but hides command-execution body output and detailed diffs, while `events` expands the full event details.
-- Provider handoff packages: `cce handoff` bundles `context-timeline.md`, `history-timeline.md`, `history-events.md`, and `source.jsonl` for continuing long tasks after switching providers, accounts, or agent sessions.
+- Provider handoff packages: `cce handoff` bundles `context-timeline.md`, `context-events.md`, `history-timeline.md`, `history-events.md`, and `source.jsonl` for continuing long tasks after switching providers, accounts, or agent sessions.
 - TUI picker with multi-select, `Updated` / `Created` sorting, and `Created`, `Updated`, `Branch`, `Project`, `Conversation` columns.
 - Optional thread-name file prefix in TUI exports, capped at 50 UTF-8 bytes.
 - JSONL export with switches for tool outputs and environment context.
@@ -339,7 +340,7 @@ cce handoff --pick 1,3 --output ./handoff
 cce handoff --input ./rollout.jsonl --output ./handoff
 ```
 
-Each selected session gets its own directory with `README.md`, `cce-provider-handoff.SKILL.md`, `context-timeline.md`, `history-timeline.md`, `history-events.md`, and `source.jsonl`. The intended reading order is `cce-provider-handoff.SKILL.md -> context-timeline.md -> history-timeline.md -> history-events.md`; use `event_ref` plus `source.jsonl` for precise lookup.
+Each selected session gets its own directory with `README.md`, `cce-provider-handoff.SKILL.md`, `context-timeline.md`, `context-events.md`, `history-timeline.md`, `history-events.md`, and `source.jsonl`. The intended reading order is `cce-provider-handoff.SKILL.md -> context-timeline.md -> context-events.md -> history-timeline.md -> history-events.md`; use `event_ref` plus `source.jsonl` for precise lookup. `context-timeline.md` is the outline of the current task state, while `context-events.md` is the detailed model-visible context and expands command output, tool output, and diff details that are still in context.
 
 The repository also ships `skills/cce-provider-handoff`, a repo-local skill for agents that either receive an existing handoff package or need to generate one themselves with `cce --list --display thread` and `cce handoff`. Handoff packages include a copy as `cce-provider-handoff.SKILL.md`, so a fresh agent can read the package-local skill even if it has not installed the repo-local one.
 
