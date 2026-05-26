@@ -10,10 +10,11 @@ Codex Chat Export CLI
 用途：从 ~/.codex 的历史 JSONL 导出 Markdown/JSONL（按 codex-chat-exporter 规则）
 
 用法：
-  cce [tui | --latest | --all | --pick 1,2 | --input <jsonl> ...] [选项]
+  cce [tui | handoff | --latest | --all | --pick 1,2 | --input <jsonl> ...] [选项]
 
 选择会话：
   tui                        打开交互式会话选择器
+  handoff                    生成 provider 切换接续包
   --latest                    导出最新会话
   --all                       导出全部会话
   --pick <i,j,k>              按索引选择（先按时间倒序）
@@ -64,13 +65,18 @@ Codex Chat Export CLI
   # 6) 打开交互式会话选择器
   cce tui --mode events --output ./exports
 
-  # 7) 按线程名/首条消息列出会话
+  # 7) 生成 provider 切换接续包
+  cce handoff --latest --output ./handoff
+  cce handoff --pick 1,3 --output ./handoff
+  cce handoff --input ./rollout.jsonl --output ./handoff
+
+  # 8) 按线程名/首条消息列出会话
   cce --list --display thread
 
-  # 8) 导出指定会话索引到目录
+  # 9) 导出指定会话索引到目录
   cce --pick 1,3 --output ./exports
 
-  # 9) 直接导出某个 JSONL 文件
+  # 10) 直接导出某个 JSONL 文件
   cce --input ~/.codex/sessions/2026/02/02/rollout-xxx.jsonl --output ./one.md
 `;
   process.stdout.write(text);
@@ -85,6 +91,7 @@ export function parseArgs(argv: string[]): CliOptions {
     display: "thread",
     output: "",
     tui: false,
+    handoff: false,
     latest: false,
     all: false,
     list: false,
@@ -104,6 +111,10 @@ export function parseArgs(argv: string[]): CliOptions {
       case "tui":
       case "--tui":
         opts.tui = true;
+        break;
+      case "handoff":
+      case "--handoff":
+        opts.handoff = true;
         break;
       case "-h":
       case "--help":
@@ -180,6 +191,10 @@ export function parseArgs(argv: string[]): CliOptions {
 
   if ((opts.mode === "events" || opts.mode === "timeline") && opts.format !== "markdown") {
     throw new CliError("--mode timeline/events 仅支持 markdown 导出");
+  }
+
+  if (opts.handoff && !opts.output) {
+    throw new CliError("handoff 需要 --output <dir>");
   }
 
   return opts;

@@ -273,6 +273,196 @@ function legacyWorkflowRows(): readonly unknown[] {
   ];
 }
 
+function codex0133EventRows(): readonly unknown[] {
+  return [
+    {
+      timestamp: "2026-05-26T00:00:00.000Z",
+      type: "session_meta",
+      payload: {
+        id: "session-0133",
+        timestamp: "2026-05-26T00:00:00.000Z",
+        cwd: "/tmp/project-0133",
+        originator: "codex_vscode",
+        cli_version: "0.133.0",
+      },
+    },
+    {
+      timestamp: "2026-05-26T00:00:00.100Z",
+      type: "event_msg",
+      payload: {
+        type: "thread_settings_applied",
+        thread_settings: {
+          model: "gpt-5.3-codex",
+          model_provider_id: "openai",
+          cwd: "/tmp/project-0133",
+        },
+      },
+    },
+    {
+      timestamp: "2026-05-26T00:00:00.200Z",
+      type: "event_msg",
+      payload: {
+        type: "thread_goal_updated",
+        goal_id: "goal_1",
+        status: "in_progress",
+        description: "完成 provider handoff",
+      },
+    },
+    {
+      timestamp: "2026-05-26T00:00:00.300Z",
+      type: "event_msg",
+      payload: {
+        type: "mcp_startup_update",
+        server: "pdf",
+        status: {
+          state: "ready",
+        },
+      },
+    },
+    {
+      timestamp: "2026-05-26T00:00:00.400Z",
+      type: "event_msg",
+      payload: {
+        type: "mcp_startup_complete",
+        ready: ["pdf"],
+        failed: [{ server: "browser", error: "timeout" }],
+        cancelled: ["old"],
+      },
+    },
+    {
+      timestamp: "2026-05-26T00:00:00.500Z",
+      type: "event_msg",
+      payload: {
+        type: "mcp_tool_call_begin",
+        call_id: "mcp_begin",
+        invocation: {
+          server: "pdf",
+          tool: "extract_pdf_text",
+          arguments: {
+            filePath: "/tmp/a.pdf",
+          },
+        },
+      },
+    },
+    {
+      timestamp: "2026-05-26T00:00:00.600Z",
+      type: "event_msg",
+      payload: {
+        type: "dynamic_tool_call_request",
+        call_id: "dyn_1",
+        tool_name: "browser_click",
+        arguments: {
+          target: "#submit",
+        },
+      },
+    },
+    {
+      timestamp: "2026-05-26T00:00:00.700Z",
+      type: "event_msg",
+      payload: {
+        type: "dynamic_tool_call_response",
+        call_id: "dyn_1",
+        tool_name: "browser_click",
+        content_items: [{ type: "text", text: "clicked" }],
+        success: true,
+        duration: { secs: 0, nanos: 120000000 },
+      },
+    },
+    {
+      timestamp: "2026-05-26T00:00:00.800Z",
+      type: "event_msg",
+      payload: {
+        type: "request_user_input",
+        call_id: "ask_1",
+        prompt: "选择导出目录",
+      },
+    },
+    {
+      timestamp: "2026-05-26T00:00:00.900Z",
+      type: "event_msg",
+      payload: {
+        type: "terminal_interaction",
+        call_id: "exec_1",
+        stdin: "q",
+        stdout: "quit",
+      },
+    },
+    {
+      timestamp: "2026-05-26T00:00:01.000Z",
+      type: "event_msg",
+      payload: {
+        type: "patch_apply_updated",
+        call_id: "patch_1",
+        changes: {
+          "src/index.ts": {
+            type: "update",
+            unified_diff: "@@\n-old\n+new\n",
+          },
+        },
+      },
+    },
+    {
+      timestamp: "2026-05-26T00:00:01.100Z",
+      type: "event_msg",
+      payload: {
+        type: "turn_diff",
+        unified_diff: "--- a/src/index.ts\n+++ b/src/index.ts\n-old\n+new\n",
+      },
+    },
+    {
+      timestamp: "2026-05-26T00:00:01.200Z",
+      type: "event_msg",
+      payload: {
+        type: "stream_error",
+        message: "retrying stream",
+      },
+    },
+    {
+      timestamp: "2026-05-26T00:00:01.300Z",
+      type: "event_msg",
+      payload: {
+        type: "model_reroute",
+        requested_model: "gpt-5.3-codex",
+        resolved_model: "gpt-5.4-codex",
+      },
+    },
+    {
+      timestamp: "2026-05-26T00:00:01.400Z",
+      type: "event_msg",
+      payload: {
+        type: "model_verification",
+        message: "需要额外验证",
+      },
+    },
+    {
+      timestamp: "2026-05-26T00:00:01.500Z",
+      type: "event_msg",
+      payload: {
+        type: "realtime_conversation_started",
+        realtime_session_id: "rt_1",
+        version: "v2",
+      },
+    },
+    {
+      timestamp: "2026-05-26T00:00:01.600Z",
+      type: "event_msg",
+      payload: {
+        type: "realtime_conversation_closed",
+        realtime_session_id: "rt_1",
+        reason: "done",
+      },
+    },
+    {
+      timestamp: "2026-05-26T00:00:01.700Z",
+      type: "event_msg",
+      payload: {
+        type: "future_meaningful_event",
+        important: "keep me",
+      },
+    },
+  ];
+}
+
 function extractEventRef(markdown: string, heading: string): string {
   const escaped = heading.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   const match = markdown.match(new RegExp(`${escaped}[\\s\\S]*?- event_ref：\`(E\\d{6})\``));
@@ -513,4 +703,58 @@ test("timeline event_ref can be used to recover hidden exec output and diff deta
   assert.match(patchReveal.stdout, /### action：`edit_file`/);
   assert.match(patchReveal.stdout, /\+hello/);
   assert.match(patchReveal.stdout, /\+world/);
+});
+
+test("Codex 0.133 workflow events are rendered instead of silently dropped", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-chat-cli-0133-events-"));
+  const inputPath = path.join(tmpDir, "rollout-0133.jsonl");
+  const timelinePath = path.join(tmpDir, "timeline.md");
+  const eventsPath = path.join(tmpDir, "events.md");
+
+  writeJsonl(inputPath, codex0133EventRows());
+
+  await execFileAsync(process.execPath, [
+    cliPath,
+    "--input",
+    inputPath,
+    "--mode",
+    "timeline",
+    "--output",
+    timelinePath,
+  ]);
+  await execFileAsync(process.execPath, [
+    cliPath,
+    "--input",
+    inputPath,
+    "--mode",
+    "events",
+    "--output",
+    eventsPath,
+  ]);
+
+  const timeline = fs.readFileSync(timelinePath, "utf8");
+  assert.match(timeline, /### 线程设置已应用/);
+  assert.match(timeline, /### 目标更新/);
+  assert.match(timeline, /### MCP 启动更新/);
+  assert.match(timeline, /### MCP 启动完成/);
+  assert.match(timeline, /### MCP 工具调用开始/);
+  assert.match(timeline, /### 动态工具调用请求/);
+  assert.match(timeline, /### 动态工具调用响应/);
+  assert.match(timeline, /### 请求用户输入/);
+  assert.match(timeline, /### 终端交互/);
+  assert.match(timeline, /### 补丁更新/);
+  assert.match(timeline, /### 回合 diff/);
+  assert.match(timeline, /### 流式错误/);
+  assert.match(timeline, /### 模型重路由/);
+  assert.match(timeline, /### 模型验证/);
+  assert.match(timeline, /### 实时会话开始/);
+  assert.match(timeline, /### 实时会话关闭/);
+  assert.match(timeline, /### 未归类事件/);
+  assert.match(timeline, /- type：`future_meaningful_event`/);
+  assert.match(timeline, /- event_ref：`E\d{6}`/);
+
+  const events = fs.readFileSync(eventsPath, "utf8");
+  assert.match(events, /~~~json\n\{\n  "target": "#submit"\n\}\n~~~/);
+  assert.match(events, /~~~diff\n--- a\/src\/index\.ts\n\+\+\+ b\/src\/index\.ts\n-old\n\+new\n~~~/);
+  assert.match(events, /~~~text\nquit\n~~~/);
 });

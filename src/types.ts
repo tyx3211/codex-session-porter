@@ -16,6 +16,7 @@ export interface CliOptions {
   display: DisplayMode;
   output: string;
   tui: boolean;
+  handoff: boolean;
   latest: boolean;
   all: boolean;
   list: boolean;

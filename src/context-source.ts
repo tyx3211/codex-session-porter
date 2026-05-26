@@ -10,6 +10,7 @@ import {
 import {
   looksLikeAgentsInstructions,
   looksLikeEnvironmentContext,
+  looksLikeRuntimeContextInjection,
 } from "./utils.js";
 
 export interface JsonlRow {
@@ -63,7 +64,7 @@ export async function readParsedJsonlRows(filePath: string): Promise<JsonlRow[]>
  * - 保留函数调用、工具调用、工具输出、reasoning 等会进入 ContextManager 的 API message；
  * - 展开 compacted.replacement_history 里的 message；
  * - 保留 compacted.message 作为压缩摘要；
- * - 排除 developer、AGENTS.md、environment_context 这类框架注入；
+ * - 排除 developer、AGENTS.md、environment_context、权限/插件/skill 等框架注入；
  * - 排除 event_msg 这类 UI/审计事件。
  */
 export function reconstructContextCandidateRows(rows: readonly JsonlRow[]): JsonlRow[] {
@@ -189,6 +190,7 @@ function isPromptCandidateResponsePayload(payload: JsonRecord): boolean {
   if (!text) return false;
   if (looksLikeAgentsInstructions(text)) return false;
   if (looksLikeEnvironmentContext(text)) return false;
+  if (looksLikeRuntimeContextInjection(text)) return false;
 
   return true;
 }
@@ -250,6 +252,7 @@ function isUserTurnBoundaryRow(row: JsonlRow): boolean {
   if (!text) return false;
   if (looksLikeAgentsInstructions(text)) return false;
   if (looksLikeEnvironmentContext(text)) return false;
+  if (looksLikeRuntimeContextInjection(text)) return false;
 
   return true;
 }

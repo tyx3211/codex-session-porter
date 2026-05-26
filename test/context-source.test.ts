@@ -130,6 +130,24 @@ function contextSourceRows(): readonly unknown[] {
         output: "AFTER_COMPACT_OUTPUT_ONLY\n",
       },
     },
+    {
+      timestamp: "2026-05-06T00:00:10.000Z",
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "<permissions instructions>\n不要作为接续正文保留\n</permissions instructions>" }],
+      },
+    },
+    {
+      timestamp: "2026-05-06T00:00:10.500Z",
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "<plugins_instructions>\n插件运行时注入\n</plugins_instructions>" }],
+      },
+    },
   ];
 }
 
@@ -167,4 +185,6 @@ test("--source context exports prompt-candidate markdown history for newer rollo
   assert.doesNotMatch(contextMarkdown, /### 上下文压缩/);
   assert.doesNotMatch(contextMarkdown, /COMMAND_OUTPUT_ONLY/);
   assert.doesNotMatch(contextMarkdown, /AFTER_COMPACT_OUTPUT_ONLY/);
+  assert.doesNotMatch(contextMarkdown, /<permissions instructions>/);
+  assert.doesNotMatch(contextMarkdown, /<plugins_instructions>/);
 });

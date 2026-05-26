@@ -11,6 +11,7 @@ description: Use when reading a cce timeline markdown export and an agent needs 
 当我们需要追某次“命令执行”事件的真实回显，或者追某次 `edit_file` 事件的完整改动内容时，不要靠全文搜索 Markdown，直接用 `event_ref` 回查原始 JSONL。
 
 核心原则：`event_ref` 是精确定位键，不是模糊标签。只要 `timeline` Markdown 还保留了 `- 源文件：...` 这一行，脚本就能确定性回查。
+如果正在阅读 `cce handoff` 接续包，也可以直接对包内 `source.jsonl` 使用同一个脚本。
 
 ## When To Use
 
@@ -40,6 +41,14 @@ node skills/cce-event-ref-lookup/scripts/reveal-event-ref.mjs \
 ```bash
 node skills/cce-event-ref-lookup/scripts/reveal-event-ref.mjs \
   --source-jsonl ~/.codex/sessions/2026/04/23/rollout-demo.jsonl \
+  --event-ref E000004
+```
+
+从 handoff 接续包回查：
+
+```bash
+node skills/cce-event-ref-lookup/scripts/reveal-event-ref.mjs \
+  --source-jsonl ./handoff/<package>/source.jsonl \
   --event-ref E000004
 ```
 

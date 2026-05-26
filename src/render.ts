@@ -6,6 +6,7 @@ import type { CliOptions, SessionMeta } from "./types.js";
 import {
   compactSingleLine,
   looksLikeEnvironmentContext,
+  looksLikeRuntimeContextInjection,
   stringFromUnknown,
   truncate,
 } from "./utils.js";
@@ -177,6 +178,18 @@ function writeCodeBlockField(writer: Writer, label: string, lang: string, value:
   if (!value) return;
   writer.write(`- ${label}：\n\n`);
   writer.write(fencedBlock(lang, value));
+}
+
+function writeJsonBlockField(writer: Writer, label: string, value: unknown): void {
+  if (value === null || value === undefined) return;
+
+  try {
+    writer.write(`- ${label}：\n\n`);
+    writer.write(fencedBlock("json", JSON.stringify(value, null, 2)));
+  } catch {
+    const text = stringFromUnknown(value);
+    if (text) writeCodeBlockField(writer, label, "text", text);
+  }
 }
 
 function lineCountFromContent(content: string): number {
@@ -549,6 +562,119 @@ function writeMcpToolCallEnd(writer: Writer, context: EventRenderContext, payloa
   ]);
 }
 
+function writeMcpToolCallBegin(writer: Writer, context: EventRenderContext, payload: JsonRecord): void {
+  const invocation = isRecord(payload.invocation) ? payload.invocation : {};
+
+  writeEventHeader(writer, "MCP 工具调用开始", context);
+  writeCodeMetadataLine(writer, "call_id", stringFromUnknown(payload.call_id));
+  writeCodeMetadataLine(writer, "server", stringFromUnknown(invocation.server));
+  writeCodeMetadataLine(writer, "tool", stringFromUnknown(invocation.tool));
+
+  if (context.detail === "full") {
+    writeJsonBlockField(writer, "arguments", invocation.arguments);
+  } else {
+    writeTextMetadataLine(writer, "arguments", previewValue(invocation.arguments, 180));
+  }
+
+  writer.write("\n");
+}
+
+function writeDynamicToolCallRequest(writer: Writer, context: EventRenderContext, payload: JsonRecord): void {
+  writeEventHeader(writer, "动态工具调用请求", context);
+  writeCodeMetadataLine(writer, "call_id", stringFromUnknown(payload.call_id));
+  writeCodeMetadataLine(writer, "tool", stringFromUnknown(payload.tool_name || payload.name || payload.tool));
+
+  if (context.detail === "full") {
+    writeJsonBlockField(writer, "arguments", payload.arguments);
+  } else {
+    writeTextMetadataLine(writer, "arguments", previewValue(payload.arguments, 180));
+  }
+
+  writer.write("\n");
+}
+
+function writeDynamicToolCallResponse(writer: Writer, context: EventRenderContext, payload: JsonRecord): void {
+  writeEventHeader(writer, "动态工具调用响应", context);
+  writeCodeMetadataLine(writer, "call_id", stringFromUnknown(payload.call_id));
+  writeCodeMetadataLine(writer, "tool", stringFromUnknown(payload.tool_name || payload.name || payload.tool));
+  writeCodeMetadataLine(writer, "success", stringFromUnknown(payload.success));
+  writeCodeMetadataLine(writer, "duration", formatDuration(payload.duration));
+  writeTextMetadataLine(writer, "error", previewValue(payload.error, 180));
+
+  if (context.detail === "full") {
+    writeJsonBlockField(writer, "content_items", payload.content_items);
+  } else {
+    writeTextMetadataLine(writer, "content", previewValue(payload.content_items, 180));
+  }
+
+  writer.write("\n");
+}
+
+function writeTerminalInteraction(writer: Writer, context: EventRenderContext, payload: JsonRecord): void {
+  writeEventHeader(writer, "终端交互", context);
+  writeCodeMetadataLine(writer, "call_id", stringFromUnknown(payload.call_id));
+  writeTextMetadataLine(writer, "stdin", previewValue(payload.stdin, 120));
+
+  const stdout = stringFromUnknown(payload.stdout || payload.output);
+  if (context.detail === "full" && stdout) {
+    writer.write("\n#### stdout\n\n");
+    writer.write(fencedBlock("text", stdout));
+    return;
+  }
+
+  writeTextMetadataLine(writer, "stdout", previewValue(stdout, 180));
+  writer.write("\n");
+}
+
+function writePatchUpdatedEvent(writer: Writer, context: EventRenderContext, payload: JsonRecord): void {
+  writeEventHeader(writer, "补丁更新", context);
+  writeCodeMetadataLine(writer, "call_id", stringFromUnknown(payload.call_id));
+  writer.write("\n");
+
+  const changes = payload.changes && typeof payload.changes === "object" ? payload.changes : {};
+  for (const [filePath, change] of Object.entries(changes)) {
+    const record = isRecord(change) ? change : {};
+    const type = typeof record.type === "string" ? record.type : "unknown";
+    writer.write(`#### ${type} \`${filePath}\`\n\n`);
+
+    if (context.detail === "full") {
+      writer.write(fencedBlock("diff", fileChangeDiff(filePath, change)));
+      continue;
+    }
+
+    const stat = fileChangeStat(change);
+    writeCodeMetadataLine(writer, "diff_stat", `+${stat.added} / -${stat.removed}`);
+    writer.write("\n");
+  }
+}
+
+function writeTurnDiffEvent(writer: Writer, context: EventRenderContext, payload: JsonRecord): void {
+  writeEventHeader(writer, "回合 diff", context);
+  const diff = stringFromUnknown(payload.unified_diff);
+
+  if (context.detail === "full" && diff) {
+    writer.write("\n");
+    writer.write(fencedBlock("diff", diff));
+    return;
+  }
+
+  const stat = fileChangeStat({ type: "update", unified_diff: diff });
+  writeCodeMetadataLine(writer, "diff_stat", `+${stat.added} / -${stat.removed}`);
+  writer.write("\n");
+}
+
+function writeUnknownWorkflowEvent(writer: Writer, context: EventRenderContext, payload: JsonRecord): void {
+  writeEventHeader(writer, "未归类事件", context);
+  writeCodeMetadataLine(writer, "type", stringFromUnknown(payload.type));
+  writeTextMetadataLine(writer, "summary", previewValue(payload, 220));
+
+  if (context.detail === "full") {
+    writeJsonBlockField(writer, "payload", payload);
+  }
+
+  writer.write("\n");
+}
+
 function writeCollabEvent(
   writer: Writer,
   context: EventRenderContext,
@@ -593,6 +719,35 @@ function writeWorkflowEventFromEventMsg(
         { label: "summary", value: previewValue(payload.last_agent_message), kind: "text" },
       ]);
       return true;
+    case "thread_settings_applied": {
+      const settings = isRecord(payload.thread_settings) ? payload.thread_settings : payload;
+      writeSimpleEvent(writer, context, "线程设置已应用", [
+        { label: "model", value: stringFromUnknown(settings.model) },
+        { label: "model_provider", value: stringFromUnknown(settings.model_provider_id || settings.model_provider) },
+        { label: "cwd", value: stringFromUnknown(settings.cwd) },
+      ]);
+      return true;
+    }
+    case "thread_goal_updated":
+      writeSimpleEvent(writer, context, "目标更新", [
+        { label: "goal_id", value: stringFromUnknown(payload.goal_id || payload.id) },
+        { label: "status", value: stringFromUnknown(payload.status) },
+        { label: "description", value: previewValue(payload.description || payload.text || payload.goal, 180), kind: "text" },
+      ]);
+      return true;
+    case "mcp_startup_update":
+      writeSimpleEvent(writer, context, "MCP 启动更新", [
+        { label: "server", value: stringFromUnknown(payload.server) },
+        { label: "status", value: previewValue(payload.status, 180), kind: "text" },
+      ]);
+      return true;
+    case "mcp_startup_complete":
+      writeSimpleEvent(writer, context, "MCP 启动完成", [
+        { label: "ready", value: previewValue(payload.ready, 180), kind: "text" },
+        { label: "failed", value: previewValue(payload.failed, 180), kind: "text" },
+        { label: "cancelled", value: previewValue(payload.cancelled, 180), kind: "text" },
+      ]);
+      return true;
     case "turn_aborted":
       writeSimpleEvent(writer, context, "回合中断", [
         { label: "reason", value: stringFromUnknown(payload.reason) },
@@ -615,8 +770,77 @@ function writeWorkflowEventFromEventMsg(
         { label: "action", value: stringFromUnknown(isRecord(payload.action) ? payload.action.type : "") },
       ]);
       return true;
+    case "mcp_tool_call_begin":
+      writeMcpToolCallBegin(writer, context, payload);
+      return true;
     case "mcp_tool_call_end":
       writeMcpToolCallEnd(writer, context, payload);
+      return true;
+    case "dynamic_tool_call_request":
+      writeDynamicToolCallRequest(writer, context, payload);
+      return true;
+    case "dynamic_tool_call_response":
+      writeDynamicToolCallResponse(writer, context, payload);
+      return true;
+    case "request_user_input":
+      writeSimpleEvent(writer, context, "请求用户输入", [
+        { label: "call_id", value: stringFromUnknown(payload.call_id) },
+        { label: "prompt", value: previewValue(payload.prompt || payload.message || payload.question, 180), kind: "text" },
+      ]);
+      return true;
+    case "terminal_interaction":
+      writeTerminalInteraction(writer, context, payload);
+      return true;
+    case "patch_apply_updated":
+      writePatchUpdatedEvent(writer, context, payload);
+      return true;
+    case "turn_diff":
+      writeTurnDiffEvent(writer, context, payload);
+      return true;
+    case "stream_error":
+      writeSimpleEvent(writer, context, "流式错误", [
+        { label: "message", value: previewValue(payload.message || payload.error, 180), kind: "text" },
+      ]);
+      return true;
+    case "model_reroute":
+      writeSimpleEvent(writer, context, "模型重路由", [
+        { label: "requested_model", value: stringFromUnknown(payload.requested_model || payload.from_model) },
+        { label: "resolved_model", value: stringFromUnknown(payload.resolved_model || payload.to_model || payload.model) },
+      ]);
+      return true;
+    case "model_verification":
+      writeSimpleEvent(writer, context, "模型验证", [
+        { label: "message", value: previewValue(payload.message || payload.reason, 180), kind: "text" },
+      ]);
+      return true;
+    case "realtime_conversation_started":
+      writeSimpleEvent(writer, context, "实时会话开始", [
+        { label: "realtime_session_id", value: stringFromUnknown(payload.realtime_session_id) },
+        { label: "version", value: stringFromUnknown(payload.version) },
+      ]);
+      return true;
+    case "realtime_conversation_closed":
+      writeSimpleEvent(writer, context, "实时会话关闭", [
+        { label: "realtime_session_id", value: stringFromUnknown(payload.realtime_session_id) },
+        { label: "reason", value: previewValue(payload.reason, 180), kind: "text" },
+      ]);
+      return true;
+    case "realtime_conversation_realtime":
+      writeSimpleEvent(writer, context, "实时会话事件", [
+        { label: "realtime_session_id", value: stringFromUnknown(payload.realtime_session_id) },
+        { label: "event", value: previewValue(payload.event || payload.payload, 180), kind: "text" },
+      ]);
+      return true;
+    case "realtime_conversation_sdp":
+      writeSimpleEvent(writer, context, "实时会话 SDP", [
+        { label: "realtime_session_id", value: stringFromUnknown(payload.realtime_session_id) },
+        { label: "sdp", value: previewValue(payload.sdp, 180), kind: "text" },
+      ]);
+      return true;
+    case "realtime_conversation_list_voices_response":
+      writeSimpleEvent(writer, context, "实时会话声音列表", [
+        { label: "voices", value: previewValue(payload.voices, 180), kind: "text" },
+      ]);
       return true;
     case "view_image_tool_call":
       writeSimpleEvent(writer, context, "查看图片", [
@@ -658,7 +882,8 @@ function writeWorkflowEventFromEventMsg(
       writeErrorEvent(writer, context, payload);
       return true;
     default:
-      return false;
+      writeUnknownWorkflowEvent(writer, context, payload);
+      return true;
   }
 }
 
@@ -949,7 +1174,12 @@ export function writeMarkdownFromRows(
 
         const text = extractTextFromResponseMessageContent(payload.content);
         if (!text.trim()) continue;
-        if (shouldFilterEnvironmentContext && looksLikeEnvironmentContext(text)) continue;
+        if (
+          shouldFilterEnvironmentContext &&
+          (looksLikeEnvironmentContext(text) || looksLikeRuntimeContextInjection(text))
+        ) {
+          continue;
+        }
 
         if (role === "user") {
           writeTurn(writer, "用户", ts, text);
@@ -1061,7 +1291,7 @@ function isToolOutputEntry(obj: JsonRecord): boolean {
 function isEnvironmentContextEntry(obj: JsonRecord): boolean {
   if (obj.type === "event_msg" && hasPayloadRecord(obj)) {
     if (obj.payload.type === "user_message" && typeof obj.payload.message === "string") {
-      return looksLikeEnvironmentContext(obj.payload.message);
+      return looksLikeEnvironmentContext(obj.payload.message) || looksLikeRuntimeContextInjection(obj.payload.message);
     }
   }
 
@@ -1069,7 +1299,7 @@ function isEnvironmentContextEntry(obj: JsonRecord): boolean {
     const payload = obj.payload;
     if (payload.type === "message" && typeof payload.role === "string") {
       const text = extractTextFromResponseMessageContent(payload.content);
-      return looksLikeEnvironmentContext(text);
+      return looksLikeEnvironmentContext(text) || looksLikeRuntimeContextInjection(text);
     }
   }
 

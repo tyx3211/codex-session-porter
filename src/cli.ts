@@ -1,5 +1,6 @@
 #!/usr/bin/env -S node --disable-warning=ExperimentalWarning
 import { exportOneSession, resolveOutputPath } from "./export.js";
+import { exportHandoffPackages } from "./handoff.js";
 import { parseArgs, printHelp } from "./args.js";
 import { resolvePickerSessions, resolveSelectedSessions } from "./selection.js";
 import { CliError } from "./types.js";
@@ -21,6 +22,16 @@ async function main(): Promise<void> {
 
   const selected = await resolveSelectedSessions(opts);
   if (selected.length === 0) throw new CliError("没有可导出的会话");
+
+  if (opts.handoff) {
+    const outDirs = await exportHandoffPackages(selected, opts.output);
+    for (const outDir of outDirs) {
+      process.stdout.write(`已导出接续包：${outDir}\n`);
+    }
+
+    process.stdout.write(`完成：${outDirs.length} 个接续包\n`);
+    return;
+  }
 
   for (const sessionInfo of selected) {
     const outPath = resolveOutputPath(selected, opts, sessionInfo);

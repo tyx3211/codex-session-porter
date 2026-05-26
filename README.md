@@ -13,6 +13,7 @@ Codex Session Porter 是一个面向 OpenAI Codex CLI / Codex VS Code 会话历�
 - 与 `codex resume` 接近的会话发现逻辑：优先读取 Codex `state_*.sqlite`，并使用 `session_index.jsonl` 回退补全线程名。
 - 支持 `history` / `context` 两层来源模式；`context` 会导出新版 rollout 的“模型可见历史候选视图”：先从最后一次带 `replacement_history` 的 compaction（上下文压缩）建立基线，再追加其后的消息、工具调用与工具结果，但不带 `AGENTS.md`、developer、`<environment_context>` 这类框架自动注入块；它既不是原始全量历史，也不是完整下一轮 API 请求。
 - 支持 `default`、`timeline` 和 `events` 三种 Markdown 模式；`timeline` 会保留完整工作流事件与 `action` 时间线，但折叠“命令执行”事件的正文输出与详细 diff，`events` 会展开完整事件细节。
+- 支持 `handoff` 接续包：把 `context-timeline.md`、`history-timeline.md`、`history-events.md` 和 `source.jsonl` 打包到同一个目录，方便切换 provider、账号或新 agent 对话后接续长任务。
 - TUI 支持多选会话、按 `Updated` / `Created` 排序、显示 `Created`、`Updated`、`Branch`、`Project`、`Conversation` 列。
 - TUI 导出时可选择按线程名作为文件名前缀，线程名前缀最多保留 50 个 UTF-8 字节。
 - JSONL 导出支持过滤工具输出和环境上下文。
@@ -78,6 +79,11 @@ cce --latest --mode timeline --output ./latest-timeline.md
 # 展开 Codex VS Code 新事件，包含命令输出和 patch diff
 cce --latest --mode events --output ./latest-events.md
 
+# 生成 provider 切换接续包
+cce handoff --latest --output ./handoff
+cce handoff --pick 1,3 --output ./handoff
+cce handoff --input ./rollout.jsonl --output ./handoff
+
 # 导出 JSONL
 cce --latest --format jsonl --output ./latest.jsonl
 
@@ -107,6 +113,28 @@ cce --latest \
 - `--include-environment-context`：包含 `<environment_context>`
 - `--only-vscode`：仅导出 Codex VS Code 会话
 
+### Provider Handoff 接续包
+
+当需要切换 provider、切换账号，或者把一个长任务交给新的 agent 对话继续时，推荐使用 `handoff`，而不是让 agent 临时猜应该导出哪种模式：
+
+```bash
+cce handoff --latest --output ./handoff
+cce handoff --pick 1,3 --output ./handoff
+cce handoff --input ./rollout.jsonl --output ./handoff
+```
+
+每个会话会生成一个独立目录，包含：
+
+- `README.md`：agent 首读说明，记录源 JSONL、线程名、项目目录、阅读顺序和回查方法
+- `context-timeline.md`：`--source context --mode timeline`，是 provider 切换后的主接续材料
+- `history-timeline.md`：`--source history --mode timeline`，是完整工作流索引，保留 `event_ref`
+- `history-events.md`：`--source history --mode events`，是完整命令输出和完整 diff 的审计材料
+- `source.jsonl`：原始 JSONL 副本，保证接续包离开本机原路径后仍可回查
+
+人工挑选会话时可以先用 `cce tui --mode timeline`；真正交给 agent 接续时，优先给它 `handoff` 接续包。
+
+仓库内置了接续用 repo-local skill：`skills/cce-provider-handoff`。它覆盖两种场景：用户已经导出 handoff 包时，指导 agent 按顺序阅读；agent 需要自主接续时，指导 agent 先用 `cce --list --display thread` 定位会话，再运行 `cce handoff`。
+
 ### TUI 快捷键
 
 - `↑` / `↓`：移动光标
@@ -130,7 +158,7 @@ cce --latest \
 - `context` 不会伪造下一轮 turn 开始时运行时重新注入的 developer 指令、skills、plugins 或其他 Prompt 外壳字段
 - `context` 当前只对较新的 rollout 结构做高保真支持；更早版本不保证能完整复原
 - `context` 默认会保留用户消息、助手消息、函数/工具调用、函数/工具输出、reasoning（推理项）、web/tool search（网页/工具搜索）相关响应项，以及 compaction（压缩摘要）与 replacement history（替代历史）里的模型可见条目
-- `context` 默认不会保留 `AGENTS.md` 注入、developer 注入、`<environment_context>`，以及 `context_compacted` 这类仅提示性的工作流事件
+- `context` 默认不会保留 `AGENTS.md` 注入、developer 注入、`<environment_context>`、权限/插件/skill 等运行时注入，以及 `context_compacted` 这类仅提示性的工作流事件
 - `context` 的 Markdown 详细程度仍由 `--mode` 控制：`timeline` 会显示命令执行和编辑事件但折叠正文输出，`events` 会展开完整输出和 diff
 
 ### Markdown 模式
@@ -144,7 +172,7 @@ cce --latest \
 - 以 `action` 为主语的文件读取、搜索、列目录和编辑事件，以及回退到“命令执行”的未知工具调用
 - 普通内置 `action` 下的 `cwd / cmd`，其中 `cmd` 会单独落在 `~~~` 代码块里；命令执行事件会额外保留执行元数据与可回查正文
 - patch 变更涉及的文件，以及 `timeline` 下的 diff 统计或 `events` 下的完整 diff
-- 网页搜索、任务开始/结束、上下文压缩、线程回滚、协作代理生命周期、MCP 工具调用等工作流事件
+- 网页搜索、任务开始/结束、上下文压缩、线程回滚、协作代理生命周期、MCP 工具调用、动态工具、目标更新、线程设置、实时会话和流式错误等工作流事件
 
 这两种模式下，每个事件块都会带一个稳定的 `event_ref`。事件块仍使用 `~~~` 作为 Markdown 代码围栏，避免命令输出里出现反引号代码块时提前闭合外层代码块。
 
@@ -168,7 +196,15 @@ node skills/cce-event-ref-lookup/scripts/reveal-event-ref.mjs \
   --event-ref E000123
 ```
 
-脚本会根据 Markdown 头部记录的 `源文件` 路径，精确回到原始 JSONL 的那一行记录，并输出完整事件内容。对“命令执行”事件会恢复完整输出；对 `edit_file` 事件会恢复完整 diff。
+在 `handoff` 接续包里，也可以直接回查包内副本：
+
+```bash
+node skills/cce-event-ref-lookup/scripts/reveal-event-ref.mjs \
+  --source-jsonl ./handoff/<package>/source.jsonl \
+  --event-ref E000123
+```
+
+脚本会根据 Markdown 头部记录的 `源文件` 路径，或显式传入的 `source.jsonl`，精确回到原始 JSONL 的那一行记录，并输出完整事件内容。对“命令执行”事件会恢复完整输出；对 `edit_file` 事件会恢复完整 diff。
 
 ### 致谢
 
@@ -185,6 +221,7 @@ The goal is not to reproduce the full rich UI from Codex. Instead, it turns usef
 - Session discovery close to `codex resume`: reads Codex `state_*.sqlite` first and falls back to `session_index.jsonl` for thread names.
 - Two source layers: `history` and `context`. `context` exports a prompt-candidate, model-visible history view for newer rollout formats instead of the raw full history.
 - Three Markdown modes: `default`, `timeline`, and `events`. `timeline` keeps the workflow event stream and `action` timeline, but hides command-execution body output and detailed diffs, while `events` expands the full event details.
+- Provider handoff packages: `cce handoff` bundles `context-timeline.md`, `history-timeline.md`, `history-events.md`, and `source.jsonl` for continuing long tasks after switching providers, accounts, or agent sessions.
 - TUI picker with multi-select, `Updated` / `Created` sorting, and `Created`, `Updated`, `Branch`, `Project`, `Conversation` columns.
 - Optional thread-name file prefix in TUI exports, capped at 50 UTF-8 bytes.
 - JSONL export with switches for tool outputs and environment context.
@@ -250,6 +287,11 @@ cce --latest --mode timeline --output ./latest-timeline.md
 # Expand Codex VS Code event records, including command output and patch diffs
 cce --latest --mode events --output ./latest-events.md
 
+# Create a provider handoff package
+cce handoff --latest --output ./handoff
+cce handoff --pick 1,3 --output ./handoff
+cce handoff --input ./rollout.jsonl --output ./handoff
+
 # Export JSONL
 cce --latest --format jsonl --output ./latest.jsonl
 
@@ -279,6 +321,20 @@ cce --latest \
 - `--include-environment-context`: include `<environment_context>`
 - `--only-vscode`: export Codex VS Code sessions only
 
+### Provider Handoff Packages
+
+Use `handoff` when a long Codex task needs to continue under a different provider, account, or fresh agent conversation:
+
+```bash
+cce handoff --latest --output ./handoff
+cce handoff --pick 1,3 --output ./handoff
+cce handoff --input ./rollout.jsonl --output ./handoff
+```
+
+Each selected session gets its own directory with `README.md`, `context-timeline.md`, `history-timeline.md`, `history-events.md`, and `source.jsonl`. The intended reading order is `context-timeline.md -> history-timeline.md -> history-events.md`; use `event_ref` plus `source.jsonl` for precise lookup.
+
+The repository also ships `skills/cce-provider-handoff`, a repo-local skill for agents that either receive an existing handoff package or need to generate one themselves with `cce --list --display thread` and `cce handoff`.
+
 ### TUI Keys
 
 - `↑` / `↓`: move cursor
@@ -301,8 +357,9 @@ Notes:
 - `context` is not the full next API request payload
 - `context` does not fabricate the runtime-reinjected developer instructions, skills, plugins, or other prompt-wrapper fields that get attached when a new turn actually starts
 - `context` currently targets newer rollout formats for high-fidelity reconstruction; older formats are not guaranteed
-- `context` keeps already-recorded developer/environment-like injections, user messages, assistant messages, and compaction markers
-- `context` excludes reasoning, command output, tool output, and search output by default because those do not belong to this prompt-candidate history view
+- `context` keeps user messages, assistant messages, function/tool calls, tool outputs, reasoning items, web/tool-search related response items, compaction summaries, and replacement-history items that are model-visible
+- `context` excludes developer/system messages, `AGENTS.md`, `<environment_context>`, permissions/plugins/skills runtime injections, and UI-only workflow events
+- `context` Markdown detail still follows `--mode`: `timeline` shows command/edit events with collapsed bodies, while `events` expands full output and diffs
 
 ### Markdown Modes
 
@@ -315,7 +372,7 @@ Both `timeline` and `events` expand Codex / Codex VS Code workflow events into M
 - action-centric file reads, searches, directory listings, and edit events, plus fallback command-execution events for unknown tool calls
 - `cwd / cmd` for built-in actions, with `cmd` rendered in a dedicated fenced block, plus execution metadata and recoverable body output for command-execution events
 - changed files, with either diff stats in `timeline` or complete diff bodies in `events`
-- workflow records such as web searches, task start/finish, context compaction, thread rollback, collaboration lifecycle, and MCP tool calls
+- workflow records such as web searches, task start/finish, context compaction, thread rollback, collaboration lifecycle, MCP calls, dynamic tools, goals, thread settings, realtime lifecycle, and stream errors
 
 Each event block carries a stable `event_ref`. Event blocks use `~~~` as Markdown fences, which avoids accidental closing when command output itself contains backtick code fences.
 
@@ -339,7 +396,15 @@ node skills/cce-event-ref-lookup/scripts/reveal-event-ref.mjs \
   --event-ref E000123
 ```
 
-The script reads the source JSONL path from the Markdown header, jumps back to the exact JSONL line referenced by `event_ref`, and prints the full event details.
+Inside a `handoff` package, the same script can read the bundled `source.jsonl` directly:
+
+```bash
+node skills/cce-event-ref-lookup/scripts/reveal-event-ref.mjs \
+  --source-jsonl ./handoff/<package>/source.jsonl \
+  --event-ref E000123
+```
+
+The script reads the source JSONL path from the Markdown header, or a directly provided `source.jsonl`, jumps back to the exact JSONL line referenced by `event_ref`, and prints the full event details.
 
 ### Acknowledgements
 

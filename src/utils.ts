@@ -111,6 +111,22 @@ export function looksLikeAgentsInstructions(text: unknown): boolean {
   return value.startsWith("# AGENTS.md instructions for ");
 }
 
+export function looksLikeRuntimeContextInjection(text: unknown): boolean {
+  const value = stringFromUnknown(text).trimStart();
+  const prefixes = [
+    "<permissions instructions>",
+    "<model_switch>",
+    "<collaboration_mode>",
+    "<realtime_conversation>",
+    "<personality_spec>",
+    "<apps_instructions>",
+    "<plugins_instructions>",
+    "<skills_instructions>",
+  ];
+
+  return prefixes.some((prefix) => value.startsWith(prefix));
+}
+
 export function extractRequestFromIdeContextBlock(text: string): string {
   const marker = "## My request for Codex:";
   const idx = text.indexOf(marker);
