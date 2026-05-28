@@ -19,6 +19,7 @@ interface HandoffPackageFiles {
   handoffSkill: string;
   contextEvents: string;
   contextTimeline: string;
+  historyDefault: string;
   historyTimeline: string;
   historyEvents: string;
   sourceJsonl: string;
@@ -81,6 +82,7 @@ async function writeHandoffPackage(
     handoffSkill: path.join(packageDir, HandoffSkillPackageFileName),
     contextEvents: path.join(packageDir, "context-events.md"),
     contextTimeline: path.join(packageDir, "context-timeline.md"),
+    historyDefault: path.join(packageDir, "history-default.md"),
     historyTimeline: path.join(packageDir, "history-timeline.md"),
     historyEvents: path.join(packageDir, "history-events.md"),
     sourceJsonl: path.join(packageDir, "source.jsonl"),
@@ -114,6 +116,18 @@ async function writeHandoffPackage(
       includeToolOutputs: false,
       includeEnvironmentContext: false,
       mode: "events",
+    }),
+    "utf8",
+  );
+  await fs.promises.writeFile(
+    files.historyDefault,
+    renderMarkdownFromRows(rows, files.sourceJsonl, sessionInfo.meta, {
+      source: "history",
+      includeAgentReasoning: false,
+      includeToolCalls: false,
+      includeToolOutputs: false,
+      includeEnvironmentContext: false,
+      mode: "default",
     }),
     "utf8",
   );
@@ -223,14 +237,15 @@ ${metadataLine("sandbox_policy", turnContext?.sandboxPolicy)}
 
 ## 阅读顺序
 
-cce-provider-handoff.SKILL.md -> context-timeline.md -> context-events.md -> history-timeline.md -> history-events.md
+cce-provider-handoff.SKILL.md -> context-timeline.md -> context-events.md -> history-default.md
 
 1. 如果 agent 支持 Codex skill，请明确说：“请使用 cce-provider-handoff skill 接续”。如果 skill 未安装，就先读包内 \`${HandoffSkillPackageFileName}\` 并遵守它。
 2. 第一轮 turn 只恢复状态：读取 handoff 文档、必要源码和回查材料，汇报接续理解、任务状态、风险点和下一步计划；不要直接写文件、改文件、提交或 push。
 3. 再读 \`context-timeline.md\`，先建立当前任务骨架。
 4. 必须读 \`context-events.md\`，它是当前真实模型可见上下文的详细版，会展开 context 内的命令输出、工具输出和 diff 细节。
-5. 需要理解完整工作流时，读 \`history-timeline.md\`，它保留所有关键事件的 \`event_ref\`。
-6. 只有需要追查更早的具体命令输出、完整 diff、MCP 或动态工具细节时，再读 \`history-events.md\` 或用 \`event_ref\` 回查 \`source.jsonl\`。
+5. 如果还需要了解更早对话背景，先读 \`history-default.md\`，它比 timeline 更适合作为交接阅读材料。
+6. 只有需要查找命令习惯、命令参数、默认配置、完整工作流索引或具体 \`event_ref\` 时，再读 \`history-timeline.md\`。
+7. 只有需要追查更早的具体命令输出、完整 diff、MCP 或动态工具细节时，再读 \`history-events.md\` 或用 \`event_ref\` 回查 \`source.jsonl\`。
 
 ## 回查方法
 

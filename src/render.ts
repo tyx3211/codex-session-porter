@@ -882,6 +882,8 @@ function writeWorkflowEventFromEventMsg(
       writeErrorEvent(writer, context, payload);
       return true;
     default:
+      if (context.detail !== "full") return false;
+
       writeUnknownWorkflowEvent(writer, context, payload);
       return true;
   }

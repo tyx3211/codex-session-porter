@@ -123,6 +123,7 @@ test("handoff command exports a self-contained package for direct input", async 
     "cce-provider-handoff.SKILL.md",
     "context-events.md",
     "context-timeline.md",
+    "history-default.md",
     "history-events.md",
     "history-timeline.md",
     "source.jsonl",
@@ -134,7 +135,7 @@ test("handoff command exports a self-contained package for direct input", async 
   assert.match(readme, /Provider Handoff 接续包/);
   assert.match(readme, /验证 provider 切换接续包/);
   assert.match(readme, /\/tmp\/handoff-project/);
-  assert.match(readme, /context-timeline\.md -> context-events\.md -> history-timeline\.md -> history-events\.md/);
+  assert.match(readme, /context-timeline\.md -> context-events\.md -> history-default\.md/);
   assert.match(readme, /event_ref/);
   assert.match(readme, /source\.jsonl/);
   assert.match(readme, /cce-provider-handoff\.SKILL\.md/);
@@ -146,17 +147,23 @@ test("handoff command exports a self-contained package for direct input", async 
   assert.match(handoffSkill, /第一轮 turn 的目标是恢复状态/);
   assert.match(handoffSkill, /不要写文件、改文件、提交、push/);
   assert.match(handoffSkill, /context-events\.md/);
+  assert.match(handoffSkill, /history-default\.md/);
+  assert.match(handoffSkill, /命令习惯/);
   assert.match(handoffSkill, /真实模型可见上下文/);
 
   const contextTimeline = fs.readFileSync(path.join(packageDir, "context-timeline.md"), "utf8");
   const contextEvents = fs.readFileSync(path.join(packageDir, "context-events.md"), "utf8");
+  const historyDefault = fs.readFileSync(path.join(packageDir, "history-default.md"), "utf8");
   const historyTimeline = fs.readFileSync(path.join(packageDir, "history-timeline.md"), "utf8");
   const historyEvents = fs.readFileSync(path.join(packageDir, "history-events.md"), "utf8");
 
   assert.match(contextTimeline, /- 源文件：`.*source\.jsonl#context`/);
   assert.match(contextEvents, /- 源文件：`.*source\.jsonl#context`/);
+  assert.match(historyDefault, /- 源文件：`.*source\.jsonl`/);
   assert.match(historyTimeline, /- 源文件：`.*source\.jsonl`/);
   assert.match(historyEvents, /- 源文件：`.*source\.jsonl`/);
+  assert.match(historyDefault, /继续完成 handoff 功能/);
+  assert.doesNotMatch(historyDefault, /### 命令执行/);
   assert.match(contextTimeline, /npm run context-check/);
   assert.doesNotMatch(contextTimeline, /CONTEXT_EXEC_OUTPUT/);
   assert.match(contextEvents, /npm run context-check/);

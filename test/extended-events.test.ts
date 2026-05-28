@@ -749,11 +749,13 @@ test("Codex 0.133 workflow events are rendered instead of silently dropped", asy
   assert.match(timeline, /### 模型验证/);
   assert.match(timeline, /### 实时会话开始/);
   assert.match(timeline, /### 实时会话关闭/);
-  assert.match(timeline, /### 未归类事件/);
-  assert.match(timeline, /- type：`future_meaningful_event`/);
   assert.match(timeline, /- event_ref：`E\d{6}`/);
+  assert.doesNotMatch(timeline, /### 未归类事件/);
+  assert.doesNotMatch(timeline, /future_meaningful_event/);
 
   const events = fs.readFileSync(eventsPath, "utf8");
+  assert.match(events, /### 未归类事件/);
+  assert.match(events, /- type：`future_meaningful_event`/);
   assert.match(events, /~~~json\n\{\n  "target": "#submit"\n\}\n~~~/);
   assert.match(events, /~~~diff\n--- a\/src\/index\.ts\n\+\+\+ b\/src\/index\.ts\n-old\n\+new\n~~~/);
   assert.match(events, /~~~text\nquit\n~~~/);
