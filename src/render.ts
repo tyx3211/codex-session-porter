@@ -21,6 +21,7 @@ interface EventRenderContext {
   ts: string | null;
   eventRef: string;
   detail: WorkflowDetailLevel;
+  includeUnknownEvents: boolean;
 }
 
 interface LegacyPendingResponseItem {
@@ -44,6 +45,7 @@ export interface RenderOptions {
   includeToolCalls: boolean;
   includeToolOutputs: boolean;
   includeEnvironmentContext: boolean;
+  includeUnknownEvents: boolean;
   mode: CliOptions["mode"];
 }
 
@@ -882,7 +884,7 @@ function writeWorkflowEventFromEventMsg(
       writeErrorEvent(writer, context, payload);
       return true;
     default:
-      if (context.detail !== "full") return false;
+      if (context.detail !== "full" || !context.includeUnknownEvents) return false;
 
       writeUnknownWorkflowEvent(writer, context, payload);
       return true;
@@ -1112,6 +1114,7 @@ export function writeMarkdownFromRows(
       ts,
       eventRef: eventRefFromLineNumber(row.lineNumber),
       detail: workflowDetail || "summary",
+      includeUnknownEvents: options.includeUnknownEvents,
     };
 
     if (obj.type === "event_msg" && hasPayloadRecord(obj)) {

@@ -37,3 +37,14 @@ test("tui source renders resume-style columns and exposes sort toggle", () => {
   assert.match(source, /sortBy/);
   assert.match(source, /切换排序/);
 });
+
+test("tui source exposes handoff export and unknown event toggles", () => {
+  const source = fs.readFileSync(tuiSourcePath, "utf8");
+
+  assert.match(source, /exportHandoffPackages/);
+  assert.match(source, /exportKind/);
+  assert.match(source, /includeUnknownEvents/);
+  assert.match(source, /setIncludeUnknownEvents/);
+  assert.match(source, /切换普通\/handoff/);
+  assert.match(source, /未知事件/);
+});

@@ -710,6 +710,7 @@ test("Codex 0.133 workflow events are rendered instead of silently dropped", asy
   const inputPath = path.join(tmpDir, "rollout-0133.jsonl");
   const timelinePath = path.join(tmpDir, "timeline.md");
   const eventsPath = path.join(tmpDir, "events.md");
+  const eventsWithUnknownPath = path.join(tmpDir, "events-with-unknown.md");
 
   writeJsonl(inputPath, codex0133EventRows());
 
@@ -730,6 +731,16 @@ test("Codex 0.133 workflow events are rendered instead of silently dropped", asy
     "events",
     "--output",
     eventsPath,
+  ]);
+  await execFileAsync(process.execPath, [
+    cliPath,
+    "--input",
+    inputPath,
+    "--mode",
+    "events",
+    "--include-unknown-events",
+    "--output",
+    eventsWithUnknownPath,
   ]);
 
   const timeline = fs.readFileSync(timelinePath, "utf8");
@@ -754,9 +765,13 @@ test("Codex 0.133 workflow events are rendered instead of silently dropped", asy
   assert.doesNotMatch(timeline, /future_meaningful_event/);
 
   const events = fs.readFileSync(eventsPath, "utf8");
-  assert.match(events, /### 未归类事件/);
-  assert.match(events, /- type：`future_meaningful_event`/);
+  assert.doesNotMatch(events, /### 未归类事件/);
+  assert.doesNotMatch(events, /future_meaningful_event/);
   assert.match(events, /~~~json\n\{\n  "target": "#submit"\n\}\n~~~/);
   assert.match(events, /~~~diff\n--- a\/src\/index\.ts\n\+\+\+ b\/src\/index\.ts\n-old\n\+new\n~~~/);
   assert.match(events, /~~~text\nquit\n~~~/);
+
+  const eventsWithUnknown = fs.readFileSync(eventsWithUnknownPath, "utf8");
+  assert.match(eventsWithUnknown, /### 未归类事件/);
+  assert.match(eventsWithUnknown, /- type：`future_meaningful_event`/);
 });

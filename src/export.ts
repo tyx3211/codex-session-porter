@@ -58,6 +58,7 @@ export async function exportOneSession(sessionInfo: SessionInfo, outPath: string
     includeToolCalls: opts.includeToolCalls,
     includeToolOutputs: opts.includeToolOutputs,
     includeEnvironmentContext: opts.includeEnvironmentContext,
+    includeUnknownEvents: opts.includeUnknownEvents,
     mode: opts.mode,
   } as const;
 

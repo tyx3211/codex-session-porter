@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, render, useApp, useInput, useStdout } from "ink";
 import {
   exportOneSession,
@@ -8,6 +8,7 @@ import {
   TUI_NAMING_ORIGINAL,
   TUI_NAMING_THREAD_PREFIX,
 } from "./export.js";
+import { exportHandoffPackages } from "./handoff.js";
 import { sessionDisplayLabel } from "./sessions.js";
 import type {
   CliOptions,
@@ -21,6 +22,7 @@ import { expandHomeDir, formatPathForDisplay, safeStat, truncate } from "./utils
 
 type TuiStep = "pick" | "confirm" | "output" | "naming" | "exporting" | "done";
 type SortBy = "updated" | "created";
+type TuiExportKind = "files" | "handoff";
 
 interface TuiAppProps {
   sessions: SessionInfo[];
@@ -64,7 +66,9 @@ function TuiApp({ sessions, opts }: TuiAppProps): React.ReactElement {
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [source, setSource] = useState<ExportSource>(opts.source);
   const [mode, setMode] = useState<MarkdownMode>(opts.mode);
+  const [includeUnknownEvents, setIncludeUnknownEvents] = useState(opts.includeUnknownEvents);
   const [display, setDisplay] = useState<DisplayMode>(opts.display);
+  const [exportKind, setExportKind] = useState<TuiExportKind>(opts.handoff ? "handoff" : "files");
   const [sortBy, setSortBy] = useState<SortBy>("updated");
   const [status, setStatus] = useState("");
   const [outputInput, setOutputInput] = useState(opts.output || path.resolve(process.cwd(), "exports"));
@@ -78,7 +82,7 @@ function TuiApp({ sessions, opts }: TuiAppProps): React.ReactElement {
 
   const rows = stdout.rows || process.stdout.rows || 24;
   const columns = stdout.columns || process.stdout.columns || 100;
-  const orderedSessions = sortSessions(sessions, sortBy);
+  const orderedSessions = useMemo(() => sortSessions(sessions, sortBy), [sessions, sortBy]);
   const total = orderedSessions.length;
   const visibleRows = Math.max(6, Math.min(18, rows - 10, total || 6));
   const maxWindowStart = Math.max(0, total - visibleRows);
@@ -86,7 +90,10 @@ function TuiApp({ sessions, opts }: TuiAppProps): React.ReactElement {
   const visibleSessions = orderedSessions.slice(windowStart, windowStart + visibleRows);
   const currentSelectionKey = orderedSessions[cursor] ? sessionSelectionKey(orderedSessions[cursor]) : null;
   const allSelectionKeys = orderedSessions.map(sessionSelectionKey);
-  const selectedSessions = orderedSessions.filter((sessionInfo) => selected.has(sessionSelectionKey(sessionInfo)));
+  const selectedSessions = useMemo(
+    () => orderedSessions.filter((sessionInfo) => selected.has(sessionSelectionKey(sessionInfo))),
+    [orderedSessions, selected],
+  );
   const nowMs = Date.now();
 
   useInput((input, key) => {
@@ -117,7 +124,9 @@ function TuiApp({ sessions, opts }: TuiAppProps): React.ReactElement {
         setSortBy,
         setSource,
         setMode,
+        setIncludeUnknownEvents,
         setDisplay,
+        setExportKind,
         setStatus,
         setStep,
       );
@@ -130,7 +139,16 @@ function TuiApp({ sessions, opts }: TuiAppProps): React.ReactElement {
     }
 
     if (step === "output") {
-      handleOutputInput(input, key, outputInput, setOutputInput, setOutputDir, setStatus, setStep);
+      handleOutputInput(
+        input,
+        key,
+        outputInput,
+        exportKind === "handoff" ? "exporting" : "naming",
+        setOutputInput,
+        setOutputDir,
+        setStatus,
+        setStep,
+      );
       return;
     }
 
@@ -148,6 +166,7 @@ function TuiApp({ sessions, opts }: TuiAppProps): React.ReactElement {
       ...opts,
       source,
       mode,
+      includeUnknownEvents,
       output: outputDir,
       format: "markdown" as const,
       namingMode,
@@ -155,6 +174,20 @@ function TuiApp({ sessions, opts }: TuiAppProps): React.ReactElement {
 
     async function runExport(): Promise<void> {
       await fs.promises.mkdir(outputDir, { recursive: true });
+
+      if (exportKind === "handoff") {
+        const outDirs = await exportHandoffPackages(selectedSessions, outputDir);
+        if (cancelled) return;
+
+        setProgress({
+          current: outDirs.length,
+          total: selectedSessions.length,
+          lastPath: outDirs[outDirs.length - 1] || outputDir,
+        });
+        setStatus(`完成：${outDirs.length} 个 handoff 接续包`);
+        setStep("done");
+        return;
+      }
 
       for (let i = 0; i < selectedSessions.length; i += 1) {
         if (cancelled) return;
@@ -185,14 +218,16 @@ function TuiApp({ sessions, opts }: TuiAppProps): React.ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [step, selectedSessions, namingCursor, opts, outputDir, mode, source]);
+  }, [step, selectedSessions, namingCursor, opts, outputDir, mode, source, includeUnknownEvents, exportKind]);
 
   return (
     <Box flexDirection="column">
       <Header
         source={source}
         mode={mode}
+        includeUnknownEvents={includeUnknownEvents}
         display={display}
+        exportKind={exportKind}
         sortBy={sortBy}
         selectedCount={selected.size}
         total={total}
@@ -210,8 +245,8 @@ function TuiApp({ sessions, opts }: TuiAppProps): React.ReactElement {
         />
       )}
 
-      {step === "confirm" && <ConfirmView count={selected.size} />}
-      {step === "output" && <OutputView value={outputInput} status={status} />}
+      {step === "confirm" && <ConfirmView count={selected.size} exportKind={exportKind} />}
+      {step === "output" && <OutputView value={outputInput} status={status} exportKind={exportKind} />}
       {step === "naming" && <NamingView cursor={namingCursor} />}
       {step === "exporting" && <ExportingView progress={progress} />}
       {step === "done" && <DoneView status={status} />}
@@ -224,7 +259,9 @@ function TuiApp({ sessions, opts }: TuiAppProps): React.ReactElement {
 function Header(props: {
   source: ExportSource;
   mode: MarkdownMode;
+  includeUnknownEvents: boolean;
   display: DisplayMode;
+  exportKind: TuiExportKind;
   sortBy: SortBy;
   selectedCount: number;
   total: number;
@@ -233,8 +270,8 @@ function Header(props: {
     <Box flexDirection="column" marginBottom={1}>
       <Text bold>选择要导出的会话</Text>
       <Text>
-        来源：{props.source}  显示：{props.display}  Markdown：{props.mode}  排序：
-        {sortByLabel(props.sortBy)}  已选：
+        导出：{exportKindLabel(props.exportKind)}  来源：{props.source}  显示：{props.display}  Markdown：
+        {props.mode}  未知事件：{props.includeUnknownEvents ? "输出" : "隐藏"}  排序：{sortByLabel(props.sortBy)}  已选：
         {props.selectedCount}/{props.total}
       </Text>
     </Box>
@@ -270,19 +307,30 @@ function PickView(props: {
   );
 }
 
-function ConfirmView({ count }: { count: number }): React.ReactElement {
+function ConfirmView({ count, exportKind }: { count: number; exportKind: TuiExportKind }): React.ReactElement {
+  const target = exportKind === "handoff" ? "个 handoff 接续包" : "个会话";
   return (
     <Box flexDirection="column">
-      <Text>确认导出 {count} 个会话？</Text>
+      <Text>
+        确认导出 {count} {target}？
+      </Text>
       <Text dimColor>Enter/y 确认，n/q 取消</Text>
     </Box>
   );
 }
 
-function OutputView({ value, status }: { value: string; status: string }): React.ReactElement {
+function OutputView({
+  value,
+  status,
+  exportKind,
+}: {
+  value: string;
+  status: string;
+  exportKind: TuiExportKind;
+}): React.ReactElement {
   return (
     <Box flexDirection="column">
-      <Text>导出目录路径：</Text>
+      <Text>{exportKind === "handoff" ? "handoff 接续包输出目录路径：" : "导出目录路径："}</Text>
       <Text color="cyan">{value}</Text>
       <Text dimColor>输入路径后按 Enter，Backspace 删除，Esc 取消</Text>
       {status ? <Text color="red">{status}</Text> : null}
@@ -328,7 +376,7 @@ function Footer({ status }: { status: string }): React.ReactElement {
     <Box flexDirection="column" marginTop={1}>
       <Text dimColor wrap="truncate-end">↑/↓ 移动，Space 选择，a 全选/反选，Enter 确认</Text>
       <Text dimColor wrap="truncate-end">c 切换 history/context，m 切换 default/timeline/events，d 切换线程名/文件名</Text>
-      <Text dimColor wrap="truncate-end">s/Tab 切换排序，q 退出</Text>
+      <Text dimColor wrap="truncate-end">h 切换普通/handoff，u 切换 events 未知事件，s/Tab 切换排序，q 退出</Text>
       {status ? <Text color="yellow">{status}</Text> : null}
     </Box>
   );
@@ -347,7 +395,9 @@ function handlePickInput(
   setSortBy: React.Dispatch<React.SetStateAction<SortBy>>,
   setSource: React.Dispatch<React.SetStateAction<ExportSource>>,
   setMode: React.Dispatch<React.SetStateAction<MarkdownMode>>,
+  setIncludeUnknownEvents: React.Dispatch<React.SetStateAction<boolean>>,
   setDisplay: React.Dispatch<React.SetStateAction<DisplayMode>>,
+  setExportKind: React.Dispatch<React.SetStateAction<TuiExportKind>>,
   setStatus: React.Dispatch<React.SetStateAction<string>>,
   setStep: React.Dispatch<React.SetStateAction<TuiStep>>,
 ): void {
@@ -398,8 +448,18 @@ function handlePickInput(
     return;
   }
 
+  if (input === "u") {
+    setIncludeUnknownEvents((current) => !current);
+    return;
+  }
+
   if (input === "c") {
     setSource((current) => nextExportSource(current));
+    return;
+  }
+
+  if (input === "h") {
+    setExportKind((current) => (current === "files" ? "handoff" : "files"));
     return;
   }
 
@@ -442,6 +502,7 @@ function handleOutputInput(
   input: string,
   key: { return?: boolean; backspace?: boolean; delete?: boolean; ctrl?: boolean; name?: string },
   outputInput: string,
+  nextStep: TuiStep,
   setOutputInput: React.Dispatch<React.SetStateAction<string>>,
   setOutputDir: React.Dispatch<React.SetStateAction<string>>,
   setStatus: React.Dispatch<React.SetStateAction<string>>,
@@ -462,7 +523,7 @@ function handleOutputInput(
 
     setOutputDir(resolved);
     setStatus("");
-    setStep("naming");
+    setStep(nextStep);
     return;
   }
 
@@ -542,6 +603,10 @@ function sortSessions(sessions: SessionInfo[], sortBy: SortBy): SessionInfo[] {
 
 function sortByLabel(sortBy: SortBy): string {
   return sortBy === "updated" ? "Updated" : "Created";
+}
+
+function exportKindLabel(exportKind: TuiExportKind): string {
+  return exportKind === "handoff" ? "handoff" : "普通";
 }
 
 interface TuiColumnWidths {

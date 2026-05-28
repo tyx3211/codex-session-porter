@@ -103,6 +103,7 @@ async function writeHandoffPackage(
       includeToolCalls: false,
       includeToolOutputs: false,
       includeEnvironmentContext: false,
+      includeUnknownEvents: false,
       mode: "timeline",
     }),
     "utf8",
@@ -115,6 +116,7 @@ async function writeHandoffPackage(
       includeToolCalls: false,
       includeToolOutputs: false,
       includeEnvironmentContext: false,
+      includeUnknownEvents: false,
       mode: "events",
     }),
     "utf8",
@@ -127,6 +129,7 @@ async function writeHandoffPackage(
       includeToolCalls: false,
       includeToolOutputs: false,
       includeEnvironmentContext: false,
+      includeUnknownEvents: false,
       mode: "default",
     }),
     "utf8",
@@ -139,6 +142,7 @@ async function writeHandoffPackage(
       includeToolCalls: false,
       includeToolOutputs: false,
       includeEnvironmentContext: false,
+      includeUnknownEvents: false,
       mode: "timeline",
     }),
     "utf8",
@@ -151,6 +155,7 @@ async function writeHandoffPackage(
       includeToolCalls: false,
       includeToolOutputs: false,
       includeEnvironmentContext: false,
+      includeUnknownEvents: false,
       mode: "events",
     }),
     "utf8",
@@ -246,6 +251,8 @@ cce-provider-handoff.SKILL.md -> context-timeline.md -> context-events.md -> his
 5. 如果还需要了解更早对话背景，先读 \`history-default.md\`，它比 timeline 更适合作为交接阅读材料。
 6. 只有需要查找命令习惯、命令参数、默认配置、完整工作流索引或具体 \`event_ref\` 时，再读 \`history-timeline.md\`。
 7. 只有需要追查更早的具体命令输出、完整 diff、MCP 或动态工具细节时，再读 \`history-events.md\` 或用 \`event_ref\` 回查 \`source.jsonl\`。
+
+注意：接续包里的 \`history-timeline.md\`、\`history-events.md\` 默认隐藏未识别工作流事件，避免交接文档被未知 UI/遥测事件淹没。只有调试 cce 事件覆盖率时，才需要单独用 \`cce --mode events --include-unknown-events\` 导出。
 
 ## 回查方法
 

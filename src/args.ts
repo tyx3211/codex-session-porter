@@ -38,6 +38,7 @@ Codex Chat Export CLI
   --include-tool-calls
   --include-tool-outputs
   --include-environment-context
+  --include-unknown-events    events 模式下包含未识别事件；默认隐藏
   --only-vscode               仅保留 originator=codex_vscode 或 source=vscode
 
 路径配置：
@@ -62,21 +63,24 @@ Codex Chat Export CLI
   # 5) 导出最新会话，并展开 Codex VS Code 的命令执行 / patch 新事件
   cce --latest --mode events --output ./latest-events.md
 
-  # 6) 打开交互式会话选择器
+  # 6) 调试 cce 事件覆盖率时，显式包含未识别工作流事件
+  cce --latest --mode events --include-unknown-events --output ./latest-events-debug.md
+
+  # 7) 打开交互式会话选择器；TUI 内可按 h 生成 handoff 接续包
   cce tui --mode events --output ./exports
 
-  # 7) 生成 provider 切换接续包
+  # 8) 生成 provider 切换接续包
   cce handoff --latest --output ./handoff
   cce handoff --pick 1,3 --output ./handoff
   cce handoff --input ./rollout.jsonl --output ./handoff
 
-  # 8) 按线程名/首条消息列出会话
+  # 9) 按线程名/首条消息列出会话
   cce --list --display thread
 
-  # 9) 导出指定会话索引到目录
+  # 10) 导出指定会话索引到目录
   cce --pick 1,3 --output ./exports
 
-  # 10) 直接导出某个 JSONL 文件
+  # 11) 直接导出某个 JSONL 文件
   cce --input ~/.codex/sessions/2026/02/02/rollout-xxx.jsonl --output ./one.md
 `;
   process.stdout.write(text);
@@ -101,6 +105,7 @@ export function parseArgs(argv: string[]): CliOptions {
     includeToolCalls: false,
     includeToolOutputs: false,
     includeEnvironmentContext: false,
+    includeUnknownEvents: false,
     onlyVsCode: false,
   };
 
@@ -180,6 +185,9 @@ export function parseArgs(argv: string[]): CliOptions {
         break;
       case "--include-environment-context":
         opts.includeEnvironmentContext = true;
+        break;
+      case "--include-unknown-events":
+        opts.includeUnknownEvents = true;
         break;
       case "--only-vscode":
         opts.onlyVsCode = true;

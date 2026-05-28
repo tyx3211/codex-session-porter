@@ -12,9 +12,9 @@ Codex Session Porter 是一个面向 OpenAI Codex CLI / Codex VS Code 会话历�
 
 - 与 `codex resume` 接近的会话发现逻辑：优先读取 Codex `state_*.sqlite`，并使用 `session_index.jsonl` 回退补全线程名。
 - 支持 `history` / `context` 两层来源模式；`context` 会导出新版 rollout 的“模型可见历史候选视图”：先从最后一次带 `replacement_history` 的 compaction（上下文压缩）建立基线，再追加其后的消息、工具调用与工具结果，但不带 `AGENTS.md`、developer、`<environment_context>` 这类框架自动注入块；它既不是原始全量历史，也不是完整下一轮 API 请求。
-- 支持 `default`、`timeline` 和 `events` 三种 Markdown 模式；`timeline` 会保留完整工作流事件与 `action` 时间线，但折叠“命令执行”事件的正文输出与详细 diff，`events` 会展开完整事件细节。
+- 支持 `default`、`timeline` 和 `events` 三种 Markdown 模式；`timeline` 会保留完整工作流事件与 `action` 时间线，但折叠“命令执行”事件的正文输出与详细 diff，`events` 会展开完整事件细节；未识别工作流事件默认隐藏，只有显式传入 `--include-unknown-events` 时才输出。
 - 支持 `handoff` 接续包：把 `context-timeline.md`、`context-events.md`、`history-default.md`、`history-timeline.md`、`history-events.md` 和 `source.jsonl` 打包到同一个目录，方便切换 provider、账号或新 agent 对话后接续长任务。
-- TUI 支持多选会话、按 `Updated` / `Created` 排序、显示 `Created`、`Updated`、`Branch`、`Project`、`Conversation` 列。
+- TUI 支持多选会话、按 `Updated` / `Created` 排序、显示 `Created`、`Updated`、`Branch`、`Project`、`Conversation` 列，并可显式切换普通导出 / `handoff` 接续包导出。
 - TUI 导出时可选择按线程名作为文件名前缀，线程名前缀最多保留 50 个 UTF-8 字节。
 - JSONL 导出支持过滤工具输出和环境上下文。
 - 短命令为 `cce`，便于放进用户级 Node bin。
@@ -79,6 +79,9 @@ cce --latest --mode timeline --output ./latest-timeline.md
 # 展开 Codex VS Code 新事件，包含命令输出和 patch diff
 cce --latest --mode events --output ./latest-events.md
 
+# 调试 cce 事件覆盖率时，显式包含未识别工作流事件
+cce --latest --mode events --include-unknown-events --output ./latest-events-debug.md
+
 # 生成 provider 切换接续包
 cce handoff --latest --output ./handoff
 cce handoff --pick 1,3 --output ./handoff
@@ -111,6 +114,7 @@ cce --latest \
 - `--include-tool-calls`：Markdown 中包含工具调用
 - `--include-tool-outputs`：Markdown 中包含工具输出，依赖 `--include-tool-calls`
 - `--include-environment-context`：包含 `<environment_context>`
+- `--include-unknown-events`：在 `events` 模式中包含未识别工作流事件，默认隐藏
 - `--only-vscode`：仅导出 Codex VS Code 会话
 
 ### Provider Handoff 接续包
@@ -134,7 +138,7 @@ cce handoff --input ./rollout.jsonl --output ./handoff
 - `history-events.md`：`--source history --mode events`，是完整命令输出和完整 diff 的审计材料
 - `source.jsonl`：原始 JSONL 副本，保证接续包离开本机原路径后仍可回查
 
-人工挑选会话时可以先用 `cce tui --mode timeline`；真正交给 agent 接续时，优先给它 `handoff` 接续包。
+人工挑选会话时可以先用 `cce tui --mode timeline`；TUI 中按 `h` 可以把导出类型切换为 `handoff`，多选后直接显式生成接续包。真正交给 agent 接续时，优先给它 `handoff` 接续包。
 
 仓库内置了接续用 repo-local skill：`skills/cce-provider-handoff`。它覆盖两种场景：用户已经导出 handoff 包时，指导 agent 按顺序阅读；agent 需要自主接续时，指导 agent 先用 `cce --list --display thread` 定位会话，再运行 `cce handoff`。`handoff` 包会同时带上 `cce-provider-handoff.SKILL.md`，方便直接交给未安装该 skill 的新 agent。
 
@@ -152,6 +156,8 @@ cce handoff --input ./rollout.jsonl --output ./handoff
 - `a`：全选或反选
 - `c`：切换 `history` / `context` 导出来源
 - `m`：切换 `default` / `timeline` / `events` Markdown 模式
+- `u`：切换 `events` 模式下未识别事件输出，默认隐藏
+- `h`：切换普通 Markdown/JSONL 导出和 `handoff` 接续包导出
 - `d`：切换线程名 / 文件名显示
 - `s` 或 `Tab`：切换 `Updated` / `Created` 排序
 - `Enter`：确认选择
@@ -175,7 +181,7 @@ cce handoff --input ./rollout.jsonl --output ./handoff
 
 - `default`：只导出用户/助手主对话，以及显式要求保留的 reasoning / tool call 内容
 - `timeline`：导出完整工作流事件时间线；普通内置 `action` 只保留 `event_ref / cwd / cmd`，未知工具调用会回退成“命令执行”事件，保留执行元数据但折叠正文输出；文件编辑事件改成 `edit_file`，并把每个文件的 diff 改成 `+/-` 行数统计
-- `events`：导出完整工作流事件时间线；普通内置 `action` 只保留精简元数据，命令执行事件会展开完整正文输出，`edit_file` 会展开完整 patch diff
+- `events`：导出完整工作流事件时间线；普通内置 `action` 只保留精简元数据，命令执行事件会展开完整正文输出，`edit_file` 会展开完整 patch diff；未识别工作流事件默认隐藏，只有 `--include-unknown-events` 会输出“未归类事件”
 
 `timeline` 和 `events` 会把 Codex / Codex VS Code 记录的新事件展开成 Markdown，包括：
 
@@ -230,9 +236,9 @@ The goal is not to reproduce the full rich UI from Codex. Instead, it turns usef
 
 - Session discovery close to `codex resume`: reads Codex `state_*.sqlite` first and falls back to `session_index.jsonl` for thread names.
 - Two source layers: `history` and `context`. `context` exports a prompt-candidate, model-visible history view for newer rollout formats instead of the raw full history.
-- Three Markdown modes: `default`, `timeline`, and `events`. `timeline` keeps the workflow event stream and `action` timeline, but hides command-execution body output and detailed diffs, while `events` expands the full event details.
+- Three Markdown modes: `default`, `timeline`, and `events`. `timeline` keeps the workflow event stream and `action` timeline, but hides command-execution body output and detailed diffs, while `events` expands the full event details. Unknown workflow events are hidden by default and only appear with `--include-unknown-events`.
 - Provider handoff packages: `cce handoff` bundles `context-timeline.md`, `context-events.md`, `history-default.md`, `history-timeline.md`, `history-events.md`, and `source.jsonl` for continuing long tasks after switching providers, accounts, or agent sessions.
-- TUI picker with multi-select, `Updated` / `Created` sorting, and `Created`, `Updated`, `Branch`, `Project`, `Conversation` columns.
+- TUI picker with multi-select, `Updated` / `Created` sorting, `Created`, `Updated`, `Branch`, `Project`, `Conversation` columns, and an explicit normal export / `handoff` package toggle.
 - Optional thread-name file prefix in TUI exports, capped at 50 UTF-8 bytes.
 - JSONL export with switches for tool outputs and environment context.
 - Short command name: `cce`.
@@ -297,6 +303,9 @@ cce --latest --mode timeline --output ./latest-timeline.md
 # Expand Codex VS Code event records, including command output and patch diffs
 cce --latest --mode events --output ./latest-events.md
 
+# Include unknown workflow events when debugging cce event coverage
+cce --latest --mode events --include-unknown-events --output ./latest-events-debug.md
+
 # Create a provider handoff package
 cce handoff --latest --output ./handoff
 cce handoff --pick 1,3 --output ./handoff
@@ -329,6 +338,7 @@ cce --latest \
 - `--include-tool-calls`: include tool calls in Markdown
 - `--include-tool-outputs`: include tool outputs in Markdown; requires `--include-tool-calls`
 - `--include-environment-context`: include `<environment_context>`
+- `--include-unknown-events`: include unknown workflow events in `events` mode; hidden by default
 - `--only-vscode`: export Codex VS Code sessions only
 
 ### Provider Handoff Packages
@@ -342,6 +352,8 @@ cce handoff --input ./rollout.jsonl --output ./handoff
 ```
 
 Each selected session gets its own directory with `README.md`, `cce-provider-handoff.SKILL.md`, `context-timeline.md`, `context-events.md`, `history-default.md`, `history-timeline.md`, `history-events.md`, and `source.jsonl`. The intended reading order is `cce-provider-handoff.SKILL.md -> context-timeline.md -> context-events.md -> history-default.md`; use `history-timeline.md` only when command habits, command arguments, default configuration, workflow indexing, or `event_ref` lookup is needed. `context-timeline.md` is the outline of the current task state, while `context-events.md` is the detailed model-visible context and expands command output, tool output, and diff details that are still in context.
+
+For manual session selection, run `cce tui`; press `h` to switch the export type to `handoff`, then multi-select sessions and generate handoff packages explicitly.
 
 The repository also ships `skills/cce-provider-handoff`, a repo-local skill for agents that either receive an existing handoff package or need to generate one themselves with `cce --list --display thread` and `cce handoff`. Handoff packages include a copy as `cce-provider-handoff.SKILL.md`, so a fresh agent can read the package-local skill even if it has not installed the repo-local one.
 
@@ -359,6 +371,8 @@ The first turn should only restore task state; do not modify files or perform im
 - `a`: select all or invert selection
 - `c`: switch between `history` and `context`
 - `m`: toggle `default` / `timeline` / `events` Markdown mode
+- `u`: toggle unknown event output in `events` mode; hidden by default
+- `h`: toggle normal Markdown/JSONL export and `handoff` package export
 - `d`: toggle thread-name / file-name display
 - `s` or `Tab`: toggle `Updated` / `Created` sorting
 - `Enter`: confirm selection
@@ -382,7 +396,7 @@ Notes:
 
 - `default`: exports the main user/assistant conversation, plus any explicitly enabled reasoning or tool-call content
 - `timeline`: exports the workflow event stream; built-in actions keep only `event_ref / cwd / cmd`, unknown tool calls fall back to a command-execution event that keeps execution metadata but hides body output, and `edit_file` replaces full diffs with `+/-` line-count summaries
-- `events`: exports the workflow event stream; built-in actions stay compact, command-execution events expand full output, and `edit_file` expands complete patch diffs
+- `events`: exports the workflow event stream; built-in actions stay compact, command-execution events expand full output, and `edit_file` expands complete patch diffs. Unknown workflow events are hidden by default and only appear as uncategorized events with `--include-unknown-events`
 
 Both `timeline` and `events` expand Codex / Codex VS Code workflow events into Markdown, including:
 

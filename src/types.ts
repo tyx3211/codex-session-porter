@@ -26,6 +26,7 @@ export interface CliOptions {
   includeToolCalls: boolean;
   includeToolOutputs: boolean;
   includeEnvironmentContext: boolean;
+  includeUnknownEvents: boolean;
   onlyVsCode: boolean;
   help?: boolean;
 }

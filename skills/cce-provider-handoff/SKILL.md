@@ -44,6 +44,8 @@ cce handoff --pick 1,3 --output ./handoff
 cce handoff --input ./rollout.jsonl --output ./handoff
 ```
 
+如果用户想人工挑选会话，也可以运行 `cce tui`，在 TUI 中用 `h` 切换到 handoff 导出类型，再多选会话并显式生成接续包。
+
 生成接续包本身是允许的恢复动作；生成后仍按“第一轮只恢复状态”的规则阅读和汇报，不要顺手修改业务代码。
 
 ## 回查
@@ -63,6 +65,9 @@ node skills/cce-event-ref-lookup/scripts/reveal-event-ref.mjs \
 
 - 一开始全文读 `history-events.md`
   应先读 `context-timeline.md`、`context-events.md` 和必要时的 `history-default.md`；`history-events.md` 是完整审计兜底，不是第一阅读材料。
+
+- 把未识别工作流事件当成必读历史
+  cce 默认在 `timeline` 和 `events` 中隐藏未识别事件，handoff 包也沿用这个默认值。只有调试 cce 事件覆盖率时，才需要显式用 `--include-unknown-events` 重新导出。
 
 - 一开始全文读 `history-timeline.md`
   `history-timeline.md` 容易包含大量工具和工作流索引。除非需要查命令习惯、命令参数、默认配置或 `event_ref`，否则先读 `history-default.md`。
