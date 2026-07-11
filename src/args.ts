@@ -7,7 +7,7 @@ export function printHelp(): void {
   const text = `
 Codex Chat Export CLI
 
-用途：从 ~/.codex 的历史 JSONL 导出 Markdown/JSONL（按 codex-chat-exporter 规则）
+用途：从 ~/.codex 的历史 JSONL 导出 HTML/Markdown/JSONL（按 codex-chat-exporter 规则）
 
 用法：
   cce [tui | handoff | --latest | --all | --pick 1,2 | --input <jsonl> ...] [选项]
@@ -26,7 +26,8 @@ Codex Chat Export CLI
   没有可用状态库时，回退到扫描 sessions/ 与 archived_sessions/。
 
 导出配置：
-  --format <markdown|jsonl>   导出格式，默认 markdown
+  --format <html|markdown|jsonl>
+                              导出格式，默认 markdown；html 提供 Prompt 侧栏阅读器
   --source <history|context>  导出来源；context 表示新版 rollout 的模型可见历史候选视图，而非完整下一轮 API 请求
   --mode <default|timeline|events>
                               Markdown 渲染模式；timeline 为中等详细时间线，events 为完整事件展开
@@ -51,36 +52,39 @@ Codex Chat Export CLI
   # 1) 导出最新会话为 markdown（只含 user/assistant）
   cce --latest
 
-  # 2) 导出最新会话，包含 reasoning + 工具调用 + 工具输出
+  # 2) 导出最新会话为可导航 HTML
+  cce --latest --format html --output ./latest.html
+
+  # 3) 导出最新会话，包含 reasoning + 工具调用 + 工具输出
   cce --latest --include-agent-reasoning --include-tool-calls --include-tool-outputs
 
-  # 3) 导出最新会话，使用中等详细时间线模式
+  # 4) 导出最新会话，使用中等详细时间线模式
   cce --latest --mode timeline --output ./latest-timeline.md
 
-  # 4) 导出最新会话的模型可见历史候选视图
+  # 5) 导出最新会话的模型可见历史候选视图
   cce --latest --source context --output ./latest-context.md
 
-  # 5) 导出最新会话，并展开 Codex VS Code 的命令执行 / patch 新事件
+  # 6) 导出最新会话，并展开 Codex VS Code 的命令执行 / patch 新事件
   cce --latest --mode events --output ./latest-events.md
 
-  # 6) 调试 cce 事件覆盖率时，显式包含未识别工作流事件
+  # 7) 调试 cce 事件覆盖率时，显式包含未识别工作流事件
   cce --latest --mode events --include-unknown-events --output ./latest-events-debug.md
 
-  # 7) 打开交互式会话选择器；TUI 内可按 h 生成 handoff 接续包
+  # 8) 打开交互式会话选择器；TUI 内可按 h 生成 handoff 接续包
   cce tui --mode events --output ./exports
 
-  # 8) 生成 provider 切换接续包
+  # 9) 生成 provider 切换接续包
   cce handoff --latest --output ./handoff
   cce handoff --pick 1,3 --output ./handoff
   cce handoff --input ./rollout.jsonl --output ./handoff
 
-  # 9) 按线程名/首条消息列出会话
+  # 10) 按线程名/首条消息列出会话
   cce --list --display thread
 
-  # 10) 导出指定会话索引到目录
+  # 11) 导出指定会话索引到目录
   cce --pick 1,3 --output ./exports
 
-  # 11) 直接导出某个 JSONL 文件
+  # 12) 直接导出某个 JSONL 文件
   cce --input ~/.codex/sessions/2026/02/02/rollout-xxx.jsonl --output ./one.md
 `;
   process.stdout.write(text);
@@ -197,8 +201,8 @@ export function parseArgs(argv: string[]): CliOptions {
     }
   }
 
-  if ((opts.mode === "events" || opts.mode === "timeline") && opts.format !== "markdown") {
-    throw new CliError("--mode timeline/events 仅支持 markdown 导出");
+  if ((opts.mode === "events" || opts.mode === "timeline") && opts.format === "jsonl") {
+    throw new CliError("--mode timeline/events 仅支持 html/markdown 导出");
   }
 
   if (opts.handoff && !opts.output) {
@@ -210,9 +214,9 @@ export function parseArgs(argv: string[]): CliOptions {
 
 function parseFormat(value: string): CliOptions["format"] {
   const normalized = value.toLowerCase();
-  if (normalized === "markdown" || normalized === "jsonl") return normalized;
+  if (normalized === "html" || normalized === "markdown" || normalized === "jsonl") return normalized;
 
-  throw new CliError("--format 仅支持 markdown/jsonl");
+  throw new CliError("--format 仅支持 html/markdown/jsonl");
 }
 
 function parseSource(value: string): CliOptions["source"] {

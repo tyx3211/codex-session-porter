@@ -3,7 +3,7 @@ import path from "node:path";
 import test from "node:test";
 import { distModuleUrl, isRecord } from "./test-support.js";
 
-type ExportFormat = "markdown" | "jsonl";
+type ExportFormat = "html" | "markdown" | "jsonl";
 type NamingMode = "original" | "thread-prefix";
 
 interface ExportModule {
@@ -79,6 +79,22 @@ test("thread prefix export names fall back to original session name when no thre
   );
 });
 
+test("html exports use the html extension", async () => {
+  const cli = await loadExportModule();
+  const sessionInfo = {
+    filePath: "/tmp/rollout-example.jsonl",
+    displayInfo: { threadName: "HTML Session" },
+  };
+
+  assert.equal(
+    cli.tuiExportFileName(sessionInfo, {
+      format: "html",
+      namingMode: "thread-prefix",
+    }),
+    "HTML Session-rollout-example.html",
+  );
+});
+
 test("tui output paths always treat the selected output as a directory", async () => {
   const cli = await loadExportModule();
   const sessionInfo = {
@@ -95,7 +111,7 @@ test("tui output paths always treat the selected output as a directory", async (
       namingMode: "original",
     }),
     path.join(
-      "/tmp/cce-out",
+      path.resolve("/tmp/cce-out"),
       "rollout-2026-04-24T01-02-03-11111111-1111-4111-8111-111111111111.md",
     ),
   );

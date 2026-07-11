@@ -168,7 +168,7 @@ function TuiApp({ sessions, opts }: TuiAppProps): React.ReactElement {
       mode,
       includeUnknownEvents,
       output: outputDir,
-      format: "markdown" as const,
+      format: opts.format,
       namingMode,
     };
 
@@ -270,7 +270,7 @@ function Header(props: {
     <Box flexDirection="column" marginBottom={1}>
       <Text bold>选择要导出的会话</Text>
       <Text>
-        导出：{exportKindLabel(props.exportKind)}  来源：{props.source}  显示：{props.display}  Markdown：
+        导出：{exportKindLabel(props.exportKind)}  来源：{props.source}  显示：{props.display}  内容模式：
         {props.mode}  未知事件：{props.includeUnknownEvents ? "输出" : "隐藏"}  排序：{sortByLabel(props.sortBy)}  已选：
         {props.selectedCount}/{props.total}
       </Text>

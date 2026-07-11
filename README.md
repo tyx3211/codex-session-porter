@@ -4,13 +4,14 @@
 
 ## 中文
 
-Codex Session Porter 是一个面向 OpenAI Codex CLI / Codex VS Code 会话历史的导出工具。它提供短命令 `cce`，可以把本地 `~/.codex` 里的会话导出为 Markdown 或 JSONL，并提供基于 React Ink 的 TUI（终端交互界面）多选导出器。
+Codex Session Porter 是一个面向 OpenAI Codex CLI / Codex VS Code 会话历史的导出工具。它提供短命令 `cce`，可以把本地 `~/.codex` 里的会话导出为 HTML、Markdown 或 JSONL，并提供基于 React Ink 的 TUI（终端交互界面）多选导出器。
 
 它的目标不是完整复刻 Codex 的富文本界面，而是把对人类有用的会话内容尽量稳定、可读地落成文件：用户消息、助手回复、工具调用、命令输出、patch diff（补丁差异）、会话线程名、创建/更新时间、分支和项目目录。
 
 ### 特性
 
 - 与 `codex resume` 接近的会话发现逻辑：优先读取 Codex `state_*.sqlite`，并使用 `session_index.jsonl` 回退补全线程名。
+- 自包含 HTML 阅读器：左侧按用户 Prompt 建立可搜索导航，中间展示完整 Codex 会话内容，支持当前 Prompt 高亮、深色模式、移动端和打印布局。
 - 支持 `history` / `context` 两层来源模式；`context` 会导出新版 rollout 的“模型可见历史候选视图”：先从最后一次带 `replacement_history` 的 compaction（上下文压缩）建立基线，再追加其后的消息、工具调用与工具结果，但不带 `AGENTS.md`、developer、`<environment_context>` 这类框架自动注入块；它既不是原始全量历史，也不是完整下一轮 API 请求。
 - 支持 `default`、`timeline` 和 `events` 三种 Markdown 模式；`timeline` 会保留完整工作流事件与 `action` 时间线，但折叠“命令执行”事件的正文输出与详细 diff，`events` 会展开完整事件细节；未识别工作流事件默认隐藏，只有显式传入 `--include-unknown-events` 时才输出。
 - 支持 `handoff` 接续包：把 `context-timeline.md`、`context-events.md`、`history-default.md`、`history-timeline.md`、`history-events.md` 和 `source.jsonl` 打包到同一个目录，方便切换 provider、账号或新 agent 对话后接续长任务。
@@ -64,6 +65,9 @@ cce --list --display file
 # 导出最新会话
 cce --latest --output ./latest.md
 
+# 导出为带 Prompt 侧栏的自包含 HTML 阅读器
+cce --latest --format html --output ./latest.html
+
 # 导出最新会话的模型可见历史候选视图
 cce --latest --source context --output ./latest-context.md
 
@@ -105,9 +109,9 @@ cce --latest \
 - `--pick <i,j,k>`：按列表索引选择会话
 - `--input <file>`：直接指定一个或多个 `.jsonl` 文件
 - `--list`：打印会话索引列表
-- `--format <markdown|jsonl>`：导出格式，默认 `markdown`
+- `--format <html|markdown|jsonl>`：导出格式，默认 `markdown`；`html` 生成带 Prompt 侧栏的自包含阅读器
 - `--source <history|context>`：导出来源，默认 `history`
-- `--mode <default|timeline|events>`：Markdown 渲染模式，默认 `default`
+- `--mode <default|timeline|events>`：HTML/Markdown 内容模式，默认 `default`
 - `--display <thread|file>`：会话列表显示模式，默认 `thread`
 - `--output <path>`：输出路径；单会话可为文件，多会话建议为目录
 - `--include-agent-reasoning`：Markdown 中包含 reasoning（推理内容）
@@ -116,6 +120,16 @@ cce --latest \
 - `--include-environment-context`：包含 `<environment_context>`
 - `--include-unknown-events`：在 `events` 模式中包含未识别工作流事件，默认隐藏
 - `--only-vscode`：仅导出 Codex VS Code 会话
+
+### HTML 阅读器
+
+使用 `--format html` 会生成单个可离线打开的 `.html` 文件，不依赖 CDN 或额外资源。左侧列表来自每条用户 Prompt，支持搜索和滚动位置高亮；中间内容保留 Markdown 排版、代码块、表格，以及 `timeline` / `events` 模式下的工作流事件。原始 HTML 默认按文本转义，避免会话内容在浏览器中执行脚本。
+
+```bash
+cce --latest --format html --output ./latest.html
+cce --latest --format html --mode timeline --output ./latest-timeline.html
+cce tui --format html --output ./exports
+```
 
 ### Provider Handoff 接续包
 
@@ -155,9 +169,9 @@ cce handoff --input ./rollout.jsonl --output ./handoff
 - `Space`：选中或取消选中当前会话
 - `a`：全选或反选
 - `c`：切换 `history` / `context` 导出来源
-- `m`：切换 `default` / `timeline` / `events` Markdown 模式
+- `m`：切换 `default` / `timeline` / `events` 内容模式
 - `u`：切换 `events` 模式下未识别事件输出，默认隐藏
-- `h`：切换普通 Markdown/JSONL 导出和 `handoff` 接续包导出
+- `h`：切换普通 HTML/Markdown/JSONL 导出和 `handoff` 接续包导出
 - `d`：切换线程名 / 文件名显示
 - `s` 或 `Tab`：切换 `Updated` / `Created` 排序
 - `Enter`：确认选择
@@ -228,13 +242,14 @@ node skills/cce-event-ref-lookup/scripts/reveal-event-ref.mjs \
 
 ## English
 
-Codex Session Porter is an exporter for OpenAI Codex CLI / Codex VS Code session history. It provides the short command `cce`, exports local `~/.codex` conversations to Markdown or JSONL, and includes a React Ink based TUI picker for selecting multiple sessions.
+Codex Session Porter is an exporter for OpenAI Codex CLI / Codex VS Code session history. It provides the short command `cce`, exports local `~/.codex` conversations to HTML, Markdown, or JSONL, and includes a React Ink based TUI picker for selecting multiple sessions.
 
 The goal is not to reproduce the full rich UI from Codex. Instead, it turns useful conversation data into stable, readable files: user messages, assistant replies, tool calls, command outputs, patch diffs, thread names, created/updated timestamps, branches, and project directories.
 
 ### Features
 
 - Session discovery close to `codex resume`: reads Codex `state_*.sqlite` first and falls back to `session_index.jsonl` for thread names.
+- Self-contained HTML reader with a searchable user-prompt sidebar, complete Codex conversation content, active-prompt highlighting, dark mode, responsive layout, and print styles.
 - Two source layers: `history` and `context`. `context` exports a prompt-candidate, model-visible history view for newer rollout formats instead of the raw full history.
 - Three Markdown modes: `default`, `timeline`, and `events`. `timeline` keeps the workflow event stream and `action` timeline, but hides command-execution body output and detailed diffs, while `events` expands the full event details. Unknown workflow events are hidden by default and only appear with `--include-unknown-events`.
 - Provider handoff packages: `cce handoff` bundles `context-timeline.md`, `context-events.md`, `history-default.md`, `history-timeline.md`, `history-events.md`, and `source.jsonl` for continuing long tasks after switching providers, accounts, or agent sessions.
@@ -288,6 +303,9 @@ cce --list --display file
 # Export the latest session
 cce --latest --output ./latest.md
 
+# Export a self-contained HTML reader with prompt navigation
+cce --latest --format html --output ./latest.html
+
 # Export the latest prompt-candidate context view for the latest session
 cce --latest --source context --output ./latest-context.md
 
@@ -329,9 +347,9 @@ cce --latest \
 - `--pick <i,j,k>`: select sessions by list index
 - `--input <file>`: pass one or more `.jsonl` files directly
 - `--list`: print session index list
-- `--format <markdown|jsonl>`: export format, defaults to `markdown`
+- `--format <html|markdown|jsonl>`: export format, defaults to `markdown`; `html` creates a self-contained prompt-indexed reader
 - `--source <history|context>`: export source, defaults to `history`
-- `--mode <default|timeline|events>`: Markdown rendering mode, defaults to `default`
+- `--mode <default|timeline|events>`: HTML/Markdown content mode, defaults to `default`
 - `--display <thread|file>`: list display mode, defaults to `thread`
 - `--output <path>`: output path; a single session can use a file path, multiple sessions should use a directory
 - `--include-agent-reasoning`: include reasoning in Markdown
@@ -340,6 +358,16 @@ cce --latest \
 - `--include-environment-context`: include `<environment_context>`
 - `--include-unknown-events`: include unknown workflow events in `events` mode; hidden by default
 - `--only-vscode`: export Codex VS Code sessions only
+
+### HTML Reader
+
+`--format html` generates one offline-ready `.html` file with no CDN or external assets. The left sidebar lists every user prompt with search and scroll-position highlighting, while the center preserves Markdown formatting, code blocks, tables, and workflow events from `timeline` or `events` mode. Raw HTML in session content is escaped by default so it cannot execute as browser code.
+
+```bash
+cce --latest --format html --output ./latest.html
+cce --latest --format html --mode timeline --output ./latest-timeline.html
+cce tui --format html --output ./exports
+```
 
 ### Provider Handoff Packages
 
@@ -370,9 +398,9 @@ The first turn should only restore task state; do not modify files or perform im
 - `Space`: select or deselect the current session
 - `a`: select all or invert selection
 - `c`: switch between `history` and `context`
-- `m`: toggle `default` / `timeline` / `events` Markdown mode
+- `m`: toggle `default` / `timeline` / `events` content mode
 - `u`: toggle unknown event output in `events` mode; hidden by default
-- `h`: toggle normal Markdown/JSONL export and `handoff` package export
+- `h`: toggle normal HTML/Markdown/JSONL export and `handoff` package export
 - `d`: toggle thread-name / file-name display
 - `s` or `Tab`: toggle `Updated` / `Created` sorting
 - `Enter`: confirm selection

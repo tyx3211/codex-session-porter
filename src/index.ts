@@ -7,6 +7,7 @@ export {
   TUI_NAMING_THREAD_PREFIX,
   tuiExportFileName,
 } from "./export.js";
+export { renderHtmlFromMarkdown } from "./html.js";
 export {
   discoverSelectableSessions,
   ensureSessionDisplayInfo,

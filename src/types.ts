@@ -1,4 +1,4 @@
-export type ExportFormat = "markdown" | "jsonl";
+export type ExportFormat = "html" | "markdown" | "jsonl";
 
 export type MarkdownMode = "default" | "timeline" | "events";
 
