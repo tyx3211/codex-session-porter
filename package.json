@@ -1,7 +1,7 @@
 {
   "name": "codex-session-porter",
   "version": "0.1.0",
-  "description": "Export OpenAI Codex CLI and VS Code chat sessions to Markdown or JSONL, with an Ink TUI picker.",
+  "description": "Export OpenAI Codex CLI and VS Code chat sessions to HTML, Markdown, or JSONL, with an Ink TUI picker.",
   "type": "module",
   "bin": {
     "cce": "./dist/cli.js"
@@ -14,7 +14,7 @@
     "url": "git+https://github.com/tyx3211/codex-session-porter.git"
   },
   "scripts": {
-    "build": "tsc && chmod +x dist/cli.js",
+    "build": "tsc && node scripts/chmod-cli.mjs",
     "build:test": "tsc -p tsconfig.test.json",
     "lint": "eslint src test",
     "test": "npm run build && npm run build:test && node --test test-js/**/*.test.js",
@@ -24,10 +24,12 @@
   "dependencies": {
     "better-sqlite3": "^12.9.0",
     "ink": "^7.0.1",
+    "markdown-it": "^14.3.0",
     "react": "^19.2.5"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
+    "@types/markdown-it": "^14.1.2",
     "@types/node": "^25.6.0",
     "@types/react": "^19.2.14",
     "eslint": "^10.2.1",

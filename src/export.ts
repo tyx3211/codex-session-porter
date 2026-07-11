@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ExportOptions, SessionInfo, TuiNamingMode } from "./types.js";
 import { parsedRowsToJsonl, readParsedJsonlRows, reconstructContextCandidateRows } from "./context-source.js";
+import { renderHtmlFromMarkdown } from "./html.js";
 import { readJsonlForSync, renderMarkdownFromJsonl, renderMarkdownFromRows } from "./render.js";
 import { expandHomeDir, safeStat, sanitizeFileNameSegment, truncateUtf8Bytes } from "./utils.js";
 
@@ -10,7 +11,9 @@ export const TUI_NAMING_THREAD_PREFIX: TuiNamingMode = "thread-prefix";
 
 export function defaultExportFileName(filePath: string, format: ExportOptions["format"]): string {
   const base = path.basename(filePath, ".jsonl");
-  return format === "markdown" ? `${base}.md` : `${base}.jsonl`;
+  if (format === "html") return `${base}.html`;
+  if (format === "markdown") return `${base}.md`;
+  return `${base}.jsonl`;
 }
 
 export function resolveOutputPath(selected: SessionInfo[], opts: ExportOptions, sessionInfo: SessionInfo): string {
@@ -72,8 +75,15 @@ export async function exportOneSession(sessionInfo: SessionInfo, outPath: string
         )
       : await renderMarkdownFromJsonl(sessionInfo.filePath, sessionInfo.meta, renderOptions);
 
+  const outputText =
+    opts.format === "html"
+      ? renderHtmlFromMarkdown(markdownText, {
+          title: sessionInfo.displayInfo?.threadName || path.basename(sessionInfo.filePath, ".jsonl"),
+        })
+      : markdownText;
+
   await fs.promises.mkdir(path.dirname(outPath), { recursive: true });
-  await fs.promises.writeFile(outPath, markdownText, "utf8");
+  await fs.promises.writeFile(outPath, outputText, "utf8");
 }
 
 export function tuiExportFileName(
